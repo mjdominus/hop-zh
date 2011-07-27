@@ -1,0 +1,1287 @@
+<chapter id="ch03">
+	<title>调度表</title>
+
+	<para>
+		在<xref linkend="sect1-8"/>中我们看到，现实中的递归函数可能性能非常差。解决绝大部分这种性能问题的最容易、最通用的方案就是<emphasis>缓存</emphasis>。不仅如此，在非递归的环境中也经常要使用缓存。
+	</para>
+
+	<para>
+		假设有个程序可以将图像从一种格式转换成另一种格式。假设输入为流行的GIF格式，输出为可以发送到打印机的格式。而这台打印机并不是放在你的桌面上的小型打印机，而是能输出超大型出版物的打印机，一个下午能印出一百万份杂志的那种。
+	</para>
+
+	<para>
+		打印机要求CMYK格式的图像。CMYK的意思是“Cyan-Magenta-Yello-Black”，即“青-洋红-黄-黑”，这是打印机用于印刷杂志时使用的墨水的四种颜色。
+		<footnote>
+			<para>
+				K表示黑色。黑色不用B表示，因为B表示蓝色(Blue)。
+			</para>
+		</footnote>
+		但是，GIF图像中的颜色是RGB值，是电脑显示器显示图片时发出的红光、绿光、蓝光的亮度。现在需要把用于显示器的RGB值转换成适合打印的CMYK值。
+	</para>
+
+	<para>
+		转换很简单，只需进行数学运算：
+	</para>
+
+	<programlisting id="RGB-CMYK"><![CDATA[
+sub RGB_to_CMYK {
+  my ($r, $g, $b) = @_;
+  my ($c, $m, $y) = (255-$r, 255-$g, 255-$b);
+  my $k = $c < $m ? ($c < $y ? $c : $y)
+                  : ($m < $y ? $m : $y);   # 最小值
+  for ($c, $m, $y) { $_ -= $k }
+  [$c, $m, $y, $k];
+}
+		]]></programlisting>
+
+	<para>
+		剩下的程序就是打开GIF文件，每次读取一个像素，再对每个像素调用RGB_to_CMYK()，最后将CMYK值写成适当的格式。
+	</para>
+
+	<para>
+		这里有个小问题。假设GIF图像宽度为1024像素、高度为768像素，这样总共有786,432个像素。这样就得调用<literal>RGB_to_CMYK()</literal>786,432次。看起来似乎没问题，不过有一点：根据GIF格式的定义，GIF图像的不同颜色数不会超过256中。这就是说，在786,432次调用中，至少有786,176次是纯粹的浪费时间，因为每次都在重复以前执行过的计算。如果能找个方法将<literal>RGB_to_CMYK()</literal>的计算结果保存下来，并在需要的时候去除，也许能提高些性能。
+	</para>
+
+	<para>
+		Perl中一说起检查是否出现的问题，解决方法几乎总是散列表。这次也不例外。如果将RGB值作为键，就可以生成一个散列，保存之前遇到的RGB值，以及相应的CMYK值。这样，程序逻辑可以改成这样：要将一组RGB值转换成一组CMYK值，首先在散列中查找RGB值。如果没有，就进行计算，并将结果保存到散列中之后，再像通常一样返回CMYK。如果散列中有这个RGB值，就直接从散列中取得CMYK值并返回，就不必再次计算了。
+	</para>
+
+	<para>
+		代码如下所示：
+	</para>
+
+	<programlisting id="RGB-CMYK-caching"><![CDATA[
+my %cache;
+
+sub RGB_to_CMYK {
+  my ($r, $g, $b) = @_;
+  my $key = join ',', $r, $g, $b;
+  return $cache{$key} if exists $cache{$key};
+  my ($c, $m, $y) = (255-$r, 255-$g, 255-$b);
+  my $k = $c < $m ? ($c < $y ? $c : $y)
+                  : ($m < $y ? $m : $y); # Minimum
+  for ($c, $m, $y) { $_ -= $k }
+  return $cache{$key} = [$c, $m, $y, $k];
+}
+		]]></programlisting>
+
+	<para>
+		假设调用<literal>RGB_to_CMYK()</literal>时使用的参数是<literal>128,0,64</literal>。第一次调用时，函数首先查找<literal>%cache</literal>中有没有<literal>'128,0,64'</literal>这个键，而这个键并不存在，所以继续执行，按照正常的流程计算，最后一行代码将结果保存到<literal>$cache{'128,0,64'}</literal>，并返回结果。第二次使用同样的参数调用该函数时，得到的键是相同的，这样就无需再次计算，直接返回<literal>$cache{'128,0,64'}</literal>的值就行了。在缓存中找到所需的值从而避免再次计算，称为<emphasis>缓存命中</emphasis>（<foreignphrase>cache hit</foreignphrase>）；缓存中没有与计算出的键相应的值，称为<emphasis>缓存不命中</emphasis>（<foreignphrase>cache miss</foreignphrase>）。
+	</para>
+
+	<para>
+		当然，减少计算所节省的时间，可能会被多出的程序逻辑和散列表查找处理完全抵消。是否出现这种情况，取决于计算要耗费多少时间，以及缓存命中的可能性。如果计算需要大量时间，那么缓存很可能是有益的。应该谨慎地评测有缓存和没有缓存的两个版本，以确定缓存是否有益。但为了让你能从直觉上作出判断，这里简单讨论一下理论。
+	</para>
+
+	<para>
+		假设调用实际的函数需要花费时间<inlineequation><textobject><phrase>f</phrase></textobject></inlineequation>。带有缓存的函数的平均执行时间取决于两个参数：管理缓存的开销<inlineequation><textobject><phrase>K</phrase></textobject></inlineequation>，以及某次调用会命中缓存的可能性<inlineequation><textobject><phrase>h</phrase></textobject></inlineequation>。极端情况下缓存一次也不命中，此时<inlineequation><textobject><phrase>h</phrase></textobject></inlineequation>为零；随着命中率增加，<literal>h</literal>趋近于1。
+	</para>
+
+	<para>
+		对于带有缓存的函数，调用的平均时间至少为<inlineequation><textobject><phrase>K</phrase></textobject></inlineequation>，因为每次调用必须要检查缓存；如果缓存不命中，则还要加上<inlineequation><textobject><phrase>f</phrase></textobject></inlineequation>。这样总时间为<inlineequation><textobject><phrase>K + (1 - h)f</phrase></textobject></inlineequation>。没有缓存的函数的执行时间显然永远是<inlineequation><textobject><phrase>f</phrase></textobject></inlineequation>，因此两者的差异就是<inlineequation><textobject><phrase>bf - K</phrase></textobject></inlineequation>。如果<inlineequation><textobject><phrase>K &lt; bf</phrase></textobject></inlineequation>，有缓存的版本就要比没有缓存的快。要提高缓存函数的速度，可以提高缓存命中率<inlineequation><textobject><phrase>b</phrase></textobject></inlineequation>，或者降低缓存管理的开销<inlineequation><textobject><phrase>K</phrase></textobject></inlineequation>。如果<inlineequation><textobject><phrase>f</phrase></textobject></inlineequation>很大，那么<inlineequation><textobject><phrase>K &lt; bf</phrase></textobject></inlineequation>就很容易满足，所以缓存在原始函数运行时间非常长的时候更容易有效。最坏情况下，缓存一次也不命中，从而<inlineequation><textobject><phrase>b = 0</phrase></textobject></inlineequation>，此时“加速”效果实际上是降低了<inlineequation><textobject><phrase>-K</phrase></textobject></inlineequation>的速度。
+	</para>
+
+	<sect1 id="sect3-1">
+		<title>用缓存完善递归</title>
+		<para>
+			<xref linkend="sect1-8"/>中我们看到，递归函数即使在输入很简单时也有可能会爆炸式增长并消耗大量时间，斐波那契函数就是个很好的例子：
+		</para>
+
+		<programlisting><![CDATA[
+# 计算给定的第n月中兔子的对数
+sub fib {
+  my ($month) = @_;
+    if ($month < 2){1}
+  else {
+    fib($month-1) + fib($month-2);
+  }
+}
+			]]></programlisting>
+
+		<para>
+			正如<xref linkend="sect1-8"/>所见，对于绝大部分参数，该函数执行得相当慢，因为重复计算要花费大量时间。例如，计算<literal>fib(20)</literal>需要先计算<literal>fib(19)</literal>和<literal>fib(18)</literal>，但计算<literal>fib(19)</literal><emphasis>也</emphasis>要计算<literal>fib(18)</literal>，同样，每次调用<literal>fib(18)</literal>都会计算<literal>fib(17)</literal>。这是递归函数的通病，不过缓存可以解决这个问题。给<literal>fib</literal>加上缓存机制，就不用一次又一次地从头计算<literal>fib(18)</literal>，而只需从缓存中取出第一次计算出的<literal>fib(18)</literal>的结果即可。也不必担心<literal>fib(17)</literal>被计算三次、<literal>fib(16)</literal>被计算五次这种问题，因为实际的计算只进行一次，第二次需要它的值时只需从缓存中提取，速度相当快。
+		</para>
+	</sect1>
+
+	<sect1 id="sect3-2">
+		<title>内联缓存</title>
+		<para>
+			给函数增加缓存功能的最直接的方式，就是给函数加个私有的散列。本例中可以使用数组代替散列，因为<literal>fib()</literal>的参数永远是非负整数。但一般情况下需要使用散列，如下所示：
+		</para>
+
+		<programlisting id="fib-cached"><![CDATA[
+# 计算给定的第n月中兔子的对数
+{ my %cache;
+  sub fib {
+    my ($month) = @_;
+    unless (exists $cache{$month}) {
+      if ($month < 2) { $cache{$month} = 1 }
+      else {
+        $cache{$month} = fib($month-1) + fib($month-2);
+      }
+    }
+    return $cache{$month};
+  }
+}
+			]]></programlisting>
+
+		<para>
+			这里，<literal>fib</literal>接收的参数没有发生变化。但跟以前不同的是，它没有立即进行递归的斐波那契计算，而是先检查缓存。缓存就是散列<literal>%cache</literal>。函数需要计算斐波那契数<literal>fib($month)</literal>时，将计算结果保存在<literal>$cache{$month}</literal>中。以后再调用<literal>fib()</literal>，就会先检查缓存散列中是否存在要计算的值。<literal>exists $cache{$month}</literal>的目的即是如此。如果缓存中不存在指定的值，就说明还没有使用当前<literal>$month</literal>调用过该函数。于是<literal>unless</literal>块中的代码执行通常的计算，必要时就执行递归调用。但是，函数计算出结果之后，并不是立即返回，而是将结果保存到缓存散列中的适当位置。例如，当<literal>$onth &lt; 2</literal>时，执行<literal>$cache{$month} = 1</literal>来保存缓存。
+		</para>
+
+		<para>
+			函数末尾的<literal>return $cache{$month}</literal>返回缓存中的值，这个值可能是函数刚刚计算出的，也可能是早就有的。
+		</para>
+
+		<para>
+			这样修改之后，<literal>fib</literal>函数就很快了，在<xref linkend="ch01"/>中见到的过度递归的问题也解决了。问题的起因就是重复计算，而缓存正好能避免重复计算的发生。函数遇到需要重复计算的情形，可以立即通过缓存返回结果。
+		</para>
+
+		<sect2 id="sect3-2-1">
+			<title>静态变量</title>
+			<para>
+				为什么<literal>%cache</literal>要放在<literal>fib</literal>之外？为什么<literal>%cache</literal>和<literal>fib</literal>外边有对大括号？
+			</para>
+
+			<para>
+				如果在<literal>fib</literal>内部定义<literal>%cache</literal>，比如：
+			</para>
+
+			<programlisting><![CDATA[
+sub fib {
+  my %cache;
+  ...
+}
+				]]></programlisting>
+
+			<para>
+				那么缓存就无法正常工作，因为每次调用<literal>fib</literal>都会生成新的<literal>%cache</literal>变量，函数返回时，这个变量就被销毁了。在函数之外定义<literal>%cache</literal>，Perl就知道<literal>%cache</literal>应当只有一个实例，在程序编译之后建立，在程序完全退出时销毁。这样<literal>%cache</literal>才能在多次调用<literal>fib</literal>之间保持住它的值。像<literal>%cache</literal>这样在所有函数之外定义的变量称为<emphasis>静态变量</emphasis>，因为它的值只有在被特意改变时才会变动，也因为C语言中类似的功能是通过关键字<literal>static</literal>（静态）定义的。
+			</para>
+
+			<para>
+				<literal>%cache</literal>定义为<literal>my</literal>，所以它在词法范围内有效。默认情况下它的作用域会一直有效到文件末尾。那样的话，定义在<literal>fib</literal>之后的所有函数都能访问并修改缓存。这与要求不符——我们希望缓存只能被<literal>fib</literal>使用。将<literal>%cache</literal>和<literal>fib</literal>都放在单独的代码块中就可以实现这一点。<literal>%cache</literal>的作用域有效到代码块末尾，而这个代码块中只有<literal>fib</literal>。
+			</para>
+		</sect2>
+	</sect1>
+
+	<sect1 id="sect3-3">
+		<title>好点子</title>
+
+		<para>
+			简单好用的点子并不多，而被广泛应用的点子更是罕见。而缓存就是好点子之一。Web浏览器把从网络上获得的网页放在缓存中，当你再次访问同一文档时，浏览器就直接从本地硬盘或内存中的缓存中获得网页，这要比重新下载要快得多。域名服务器把它从远程服务器上获得的应答结果保存在缓存中。有人第二次查询统一域名时，由于服务器已经缓存了结果，因此无需再次执行耗时的网络对话。操作系统从磁盘上读取数据时，很可能会将数据缓存在内存中，以便再次使用；CPU从内存中获取数据时，会将数据缓存在特殊的缓存存储器中，这个缓存存储器要比普通内存快得多。
+		</para>
+
+		<para>
+			在实际的应用程序中，缓存无处不在。几乎任何程序都会有几个函数，可以通过缓存提高其性能。但缓存的真正价值在于它是<emphasis>纯机械劳动</emphasis>。如果要提高函数的性能，可以重写函数，引入更好的数据结构，或使用更完善的算法。这需要相当的创造力，而创造力往往是稀缺资源。但添加缓存完全不需要动脑子，添加缓存所需的修改永远是一样的。如这个函数：
+		</para>
+
+		<programlisting><![CDATA[
+sub some_function {
+  $result = some computation involving @_;
+  return $result;
+}
+			]]></programlisting>
+
+		<para>
+			只需将它变成：
+		</para>
+
+		<programlisting><![CDATA[
+{ my %cache;
+  sub some_function_with_caching {
+    my $key = join ',', @_;
+    return $cache{$key} if exists $cache{$key};
+    $result = the same computation involving @_;
+    return $cache{$key} = $result;
+  }
+}
+			]]></programlisting>
+
+		<para>
+			修改方式几乎对任何函数都一样。唯一需要变化的就是<literal>join ',', @_</literal>一行。该行负责将函数的参数数组转化为字符串，当作散列的键使用。像这样将任意的值转换为字符串的操作称为<emphasis>序列化</emphasis>（<foreignphrase>serialization</foreignphrase>）或<emphasis>马歇尔化</emphasis>（<foreignphrase>marshalling</foreignphrase>）。
+			<footnote>
+				<para>
+					马歇尔化这个名字是由于Edward Waite Marshall在1962年首次研究它而得名，之后通用电气继续研究。
+				</para>
+			</footnote>
+			前面的<literal>join ',', @_</literal>只有当函数的参数是数字，或者是不含逗号的字符串时才能正常使用。稍后我们将详细讨论如何生成缓存的键。
+		</para>
+	</sect1>
+
+	<sect1 id="sect3-4">
+		<title>Memoization[TODO]</title>
+
+		<para>
+			给函数增加缓存的代码并不麻烦。如您所见，对任何函数的修改方式几乎都是相同的。那么，为何不让计算机自己来做呢？只需要告诉Perl，要在某个函数上启用缓存就行了。Perl应该可以自动进行所需的变换。对函数进行自动变换以添加缓存，称为<emphasis>memoization</emphasis>，我们说函数被<emphasis>memoized</emphasis>了。
+			<footnote>
+				<para>
+					memoization这个词是由Donald Michie在1968年创造的。
+				</para>
+			</footnote>
+		</para>
+
+		<para>
+			我写的标准<literal>Memoize</literal>模块可以完成这仙宫工作。有了<literal>Memoize</literal>模块，就完全不必重写<literal>fib</literal>函数了。只需在程序开头加上这样两行即可：
+		</para>
+
+		<programlisting id="fib-automemo"><![CDATA[
+use Memoize;
+memoize 'fib';
+# 计算给定的第n月中兔子的对数
+sub fib {
+  my ($month) = @_;
+  if ($month < 2) { 1 }
+  else {
+    fib($month-1) + fib($month-2);
+  }
+}
+			]]></programlisting>
+
+		<para>
+			这样<literal>fib</literal>就带有缓存功能了。代码本身和原始函数一模一样，但速度要快得多。
+		</para>
+	</sect1>
+
+	<sect1 id="sect3-5">
+		<title><literal>Memoize</literal>模块</title>
+
+		<para>
+			这本书并不打算介绍Perl模块的内部原理，但<literal>Memoize</literal>内部应用的一些技术和稍后要讨论的内容有直接的关系，所以现在简单介绍一下。
+		</para>
+
+		<para>
+			<literal>Memoize</literal>的参数为函数名（或者函数引用）。它生成一个新的函数用于维护缓存并在缓存中查找它的参数。如果新函数在缓存中找到了参数，就直接返回缓存的值，否则就调用原始函数，将返回值保存在缓存中之后再将它返回给调用者。
+		</para>
+
+		<para>
+			生成新函数之后，<literal>Memoize</literal>就将它安装到Perl的符号表中，代替原来的函数。这样，你以为你是在调用原始函数，实际上调用的是新的缓存管理函数。
+		</para>
+
+		<para>
+			真正的<literal>Memoize</literal>模块的代码有350行之多，无法深入研究它的内部细节，因此只就一个小型的memoizer[TODO]函数简化版进行讨论。省略的部分中，最重要的是处理Perl符号表的代码（此处我们手动处理符号表）。要讨论的<literal>memoize</literal>函数的参数是需要memoize的函数引用，函数返回值是memoize过的函数引用，即指向缓存管理函数的引用：
+		</para>
+
+		<programlisting id="memoize"><![CDATA[
+sub memoize {
+  my ($func) = @_;
+  my %cache;
+  my $stub = sub {
+    my $key = join ',', @_;
+    $cache{$key} = $func->(@_) unless exists $cache{$key};
+    return $cache{$key};
+  };
+  return $stub;
+}
+			]]></programlisting>
+
+		<para>
+			调用方法为，首先执行：
+		</para>
+
+		<programlisting><![CDATA[
+$fastfib = memoize(\&fib);
+			]]></programlisting>
+
+		<para>
+			此时<literal>$fastfib</literal>就是<literal>fib()</literal>被memoized之后的函数。接下来执行<literal>*fib = memoize(\&amp;fib)</literal>可以将memoized后的函数安装到符号表中，替换原始函数。本例中这一步是必须的，否则就无法快速计算斐波那契数。仅仅创建memoized的fib()函数是不够的，因为<literal>fib()</literal>内部的递归调用还在调用名为<literal>fib()</literal>的函数，如果不给<literal>*fib</literal>复制，那么<literal>fib</literal>就还是原始的不带缓存的版本，速度很慢。
+		</para>
+
+		<para>
+			<literal>memoize</literal>的工作原始是什么呢？<literal>memoize</literal>首先接受<literal>fib</literal>的引用，并创建一个私有的<literal>%cache</literal>变量来保存缓存数据。然后生成一个<emphasis>stub函数</emphasis>，临时保存到<literal>$stub</literal>中，再返回给调用者。这个stub函数就是被memoized之后的<literal>fib</literal>。本例中，调用<literal>memoize</literal>的函数得到这个stub函数的引用之后，将其保存到<literal>$fastfib</literal>中。
+		</para>
+
+		<para>
+			调用<literal>$fastfib</literal>时，实际上调用的是之前<literal>memoize</literal>生成的stub函数。它将函数参数用逗号连接起来组成散列的键，然后在缓存中查找有无相同的键。如果有，stub函数就直接返回缓存的值。
+		</para>
+
+		<para>
+			如果散列中没有指定的键，stub函数就通过<literal>$func-&gt;(@_)</literal>的方式调用原始函数，得到结果后保存到缓存中，再返回（参见<xref linkend="fg3-1"/>）。
+		</para>
+
+		<figure id="fg3-1">
+			<title>调用被memoized的函数的过程</title>
+			<graphic fileref="img/fg3-1.png"/>
+		</figure>
+
+		<sect2 id="sect3-5-1">
+			<title>作用域和有效范围</title>
+			<para>
+				有几个细微之处需要解释一下。首先，假设调用了<literal>memoize(\&amp;fib)</literal>，得到返回值<literal>$fastfib</literal>。然后调用<literal>$fastfib</literal>，而它又使用了<literal>$func</literal>。人们经常会问，为什么<literal>$func</literal>在<literal>memoize</literal>返回之后仍然有效？
+			</para>
+
+			<para>
+				这个问题表明了通常人们对作用域的误解。变量由两部分组成：变量名和变量值。
+				<footnote>
+					<para>
+						这种说法并不完全正确。Perl这种非强制性语言中，变量是变量名和<emphasis>存储变量值的</emphasis>那块内存之间的关系。不过在我们的讨论中，这点区别并不重要。
+					</para>
+				</footnote>
+				将值和名称关联起来，就得到了一个变量。这种关联称为<emphasis>绑定</emphasis>，也说该变量名<literal>被绑定</literal>到了值上。
+			</para>
+
+			<para>
+				在<literal>memoize</literal>返回之后再使用<literal>$func</literal>可能会产生两个问题：值有可能不存在了，或者绑定关系发生了改变，导致变量名指向了错误的值，或什么都不指向。
+			</para>
+
+			<sect3>
+				<title>作用域</title>
+				<para>
+					<emphasis>作用域</emphasis>（<foreignphrase>scope</foreignphrase>）是某个变量绑定有效的那段程序代码。在绑定的作用域内，名称和值之间有关联；出了这个作用域，绑定就会<emphasis>脱离作用域</emphasis>，名称和值之间就不再相关。名称可能有其他意义，或者完全没有意义。
+				</para>
+
+				<para>
+					进入<literal>memoize</literal>后，<literal>my $func</literal>定义创建了一个新的标量值，并为它绑定了名称<literal>$func</literal>。名称的作用域是用<literal>my</literal>定义的，那么<literal>$func</literal>的有效范围从<literal>my</literal>定义语句之后开始，直到最小的语句块结束。本例中，最小的语句块就是标有<literal>sub memoize</literal>的语句块。在这个块中，<literal>$func</literal>指向刚刚创建的词法变量；在块之外，它指向其他内容，可能是毫无关联的全局变量<literal>$func</literal>。由于调用<literal>$func</literal>的stub函数位于该语句块之内，所以并不存在作用域问题——在stub函数内，<literal>$func</literal>仍然处于作用域之内，<literal>$func</literal>这个名称仍有正确的绑定。
+				</para>
+
+				<para>
+					离开<literal>sub memoize</literal>块以后，<literal>$func</literal>就有了其他的意义，但是stub函数位于块内，而不是块外。注意作用域是<emphasis>词法</emphasis>的，就是说它是静态程序文本的属性，而不是代码执行顺序的属性。stub函数在<literal>sub memoize</literal>语句块之外<emphasis>被调用</emphasis>的这个事实与它毫无关系，它的代码“从物理上”位于<literal>$func</literal>绑定的作用域之内。
+				</para>
+
+				<para>
+					<literal>%cache</literal>的情况与此完全相同。
+				</para>
+			</sect3>
+
+			<sect3>
+				<title>有效期</title>
+				<para>
+					许多人询问<literal>$func</literal>是否跳出了作用域，但他们关心的其实是另一个问题，跟作用域毫无关联，而是另一个完全不同的问题，即<emphasis>有效期</emphasis>。值的有效期就是在程序执行过程中，该值切实可用的那段时间。在Perl中，值的有效期结束后，就会被销毁，垃圾回收程序就收回它所占的内存，以便重复使用。
+				</para>
+
+				<para>
+					关于有效期，有一点很重要，就是它跟变量名称几乎完全没有关系。在Perl中，值的有效期直到没有任何外界的引用指向它位置。值被保存在命名变量中，当然会被算作一次引用，但引用还有其他形式。例如：
+				</para>
+
+				<programlisting><![CDATA[
+my $x;
+{
+  $x=3;
+  my $r = \$x;
+}
+					]]></programlisting>
+
+				<para>
+					此处有个值为3的标量。在语句块结束时，指向它的有两个引用：
+				</para>
+
+				<graphic fileref="img/value-duration-1.png"/>
+
+				<para>
+					<emphasis>pad</emphasis>是Perl用于表示<literal>my</literal>变量的绑定关系的内部数据结构。（保存全局变量的结构与此不同。）pad本身有一个指向3的引用，因为名称<literal>$x</literal>绑定到值3。另一个指向3的引用来自于一个引用值，该引用值绑定到<literal>$r</literal>。
+				</para>
+
+				<para>
+					当控制权离开该数据块时，<literal>$r</literal>就离开了作用域，因此<literal>$r</literal>和它的值之间的绑定就消失了。从内部看，Perl从pad中删除了<literal>$r</literal>的绑定：
+				</para>
+
+				<graphic fileref="img/value-duration-2.png"/>
+
+				<para>
+					此时，<literal>$r</literal>曾经指向的那个引用值上就没有任何引用了。因此，它的有效期结束，Perl立即将其销毁：
+				</para>
+
+				<graphic fileref="img/value-duration-3.png"/>
+
+				<para>
+					这种行为太常见了：变量名离开作用域，它的值就立刻被销毁。关于作用域和有效期的许多误解，很可能都是因为这个随处可见的这个简单例子。但实际上，作用域和有效期并非永远关联在一起，比如下面这个例子：
+				</para>
+
+				<programlisting><![CDATA[
+my $r;
+{
+  my $x = 3;
+  $r = \$x;
+}
+					]]></programlisting>
+
+				<graphic fileref="img/value-duration-4.png"/>
+
+				<para>
+					控制权离开语句块之后，<literal>$x</literal>的绑定就会消失，<literal>$x</literal>也被从pad上删除：
+				</para>
+
+				<graphic fileref="img/value-duration-5.png"/>
+
+				<para>
+					与前例不同，失去绑定的值仍会永远存在，因为与<literal>$r</literal>绑定的那个引用仍然指向它。只有当这个引用消失时，该值的有效期才会结束。
+				</para>
+
+				<para>
+					这种作用域与有效期分离的特性是Perl变量的基本属性。例如，Perl面向对象构造函数通常这样写：
+				</para>
+
+				<programlisting><![CDATA[
+sub new {
+  ...
+  my %self;
+  ...
+  return \%self;
+}
+					]]></programlisting>
+
+				<para>
+					该构造函数创建一个散列，代表该对象本身，然后返回指向该散列的引用。即使<literal>%self</literal>这个名称脱离作用域，只要构造函数的调用者保存了这个引用，对象就会一直存在下去。但在C语言中，类似的代码是错误的，因为C语言中的自动变量离开作用域后就消失了：
+				</para>
+
+				<programlisting><![CDATA[
+/* C语言的情况 */
+struct st_object *new(...) {
+  struct st_object self;
+  ...
+  return &self; /* 会导致 core dump */
+}
+					]]></programlisting>
+
+				<para>
+					现在回到<literal>memoize</literal>。<literal>memoize</literal>返回时，<literal>$func</literal>确实脱离了作用域。但值不会消失，因为stub函数还在引用它。要全面理解这一过程，需要先理解Perl的内部工作原理（参见<xref linkend="fg3-2"/>）。
+				</para>
+
+				<figure id="fg3-2">
+					<title><literal>memoize</literal>生成的数据结构</title>
+					<graphic fileref="img/fg3-2.png"/>
+				</figure>
+
+				<para>
+					图的正中央上方的两个方框表示stub函数。用Perl术语来说，这个方框称为<emphasis>CV</emphasis>，即“code value”（代码值），它是代码引用的内部表示方式。（图的右侧可以看到绑定到<literal>$codref</literal>的代码引用。）CV本质上是一对指针，一个指向子程序的代码，另一个指向子程序被定义的那一刻的pad。只要这个pad不消失，<literal>$func</literal>的绑定也不会消失。而CV引用了这个pad，所以这个pad也不会消失。而CV也不会消失，因为调用者把它赋给<literal>$fastfib</literal>时，就将它保存在了调用者的pad中。
+				</para>
+
+				<para>
+					Perl知道stub函数会在某一时刻被调用，而被调用时又可能会使用<literal>$func</literal>的值。因此，只要stub还存在，<literal>$func</literal>的值就必须时刻待命。<literal>$fastfib</literal>中保存了指向stub的引用，只要这个引用存在，就必须保证stub的存在。类似地，缓存的<literal>%cache</literal>也像stub函数一样永远存在。
+				</para>
+			</sect3>
+		</sect2>
+
+		<sect2 id="sect3-5-2">
+			<title>文法闭包</title>
+			<para>
+				你可能会发愁另一个问题了。只要stub存在，<literal>$func</literal>的值就会存在，那在第一次产生的stub函数依然存在时，再次调用<literal>memoize</literal>，会发生什么情况？第二次调用时，给<literal>$func</literal>赋值会不会覆盖第一个stub所使用的值？
+			</para>
+
+			<para>
+				答案是不会，程序会正常运行。这是因为Perl中的匿名函数有个属性，称为<emphasis>文法闭包</emphasis>（<foreignphrase>lexical closure</foreignphrase>）。创建匿名函数后，Perl就将该函数的pad和作用域内的所有绑定都包装在一起，关联到CV上。这种跟环境包装在一块的函数称为<emphasis>闭包</emphasis>（<foreignphrase>closure</foreignphrase>）。
+			</para>
+
+			<para>
+				调用stub时，环境会临时恢复到stub定义时的环境，stub函数的代码就在这个环境中执行。文法闭包的意思是，匿名函数就像一个旅行者，无论走到哪里都会带着自己的环境。
+			</para>
+
+			<para>
+				第一次调用<literal>memoize</literal>将<literal>fib()</literal>函数memoize化时，会为<literal>%cache</literal>和<literal>$func</literal>的绑定产生一个新的pad。然后创建stub，pad就会跟stub的CV包装在一起，最后CV（这里称之为<literal>fastfib()</literal>）被返回给调用者。
+			</para>
+
+			<para>
+				第二次调用<literal>memoize</literal>，这次memoize的对象不是<literal>fib()</literal>函数，而是<literal>quib()</literal>函数（参见<xref linkend="fg3-3"/>）。这次同样会生成新的pad，上面绑定了新的<literal>%cache</literal>和<literal>$func</literal>变量。然后创建一个CV（称之为<literal>fastquib()</literal>），其中包含了指向pad的指针。新的pad与关联在<literal>fastfib()</literal>上的pad没有任何关系。
+			</para>
+
+			<figure id="fg3-3">
+				<title>两次调用<literal>memoize</literal>之后的状态</title>
+				<graphic fileref="img/fg3-3.png"/>
+			</figure>
+
+			<para>
+				调用<literal>fastfib</literal>时，环境会临时恢复到<literal>fastfib</literal>的pad，然后执行<literal>fastfib</literal>的代码。这段代码用到了名为<literal>%cache</literal>和<literal>$func</literal>的变量，这两个变量都能在<literal>fastfib</literal>的pad中找到。此时<literal>%cache</literal>中可能已保存了一些数据。最后，<literal>fastfib</literal>返回，环境恢复成原来的pad。
+			</para>
+
+			<para>
+				接下来调用<literal>fastquib</literal>，执行过程跟上述几乎相同。首先恢复成<literal>fastquib</literal>的pad，这样<literal>%cache</literal>和<literal>$func</literal>就表示<literal>fastquib</literal>自己的变量。然后执行<literal>fastquib</literal>的代码，它也要使用名为<literal>%cache</literal>和<literal>$func</literal>的变量。此时变量的查找在<literal>fastquib</literal>的pad中进行，它跟<literal>fastfib</literal>的pad完全无关。<literal>fastquib</literal>完全无法访问到保存在<literal>fastfib</literal>的<literal>%cache</literal>中的数据。
+			</para>
+
+			<para>
+				由于CV中的代码部分是只读的，因此几个CV之间可以共享同一段代码。这样可以节约内存。CV的有效期结束后，它的pad就会被垃圾回收掉。
+			</para>
+
+			<para>
+				<xref linkend="fg3-4"/>是个简单的例子。
+			</para>
+
+			<programlisting id="closure-example"><![CDATA[
+sub make_counter {
+  my $n = shift;
+  return sub { print "n is ", $n++ };
+}
+my $x = make_counter(7);
+my $y = make_counter(20);
+$x->(); $x->(); $x->();
+$y->(); $y->(); $y->();
+$x->();
+				]]></programlisting>
+
+			<figure id="fg3-4">
+				<title>两次调用<literal>make_counter</literal>之后</title>
+				<graphic fileref="img/fg3-4.png"/>
+			</figure>
+
+			<para>
+				现在<literal>$x</literal>包含了一个闭包，其中的代码是<literal>print "n is ", $n++</literal>，它的环境包含变量<literal>$n</literal>，值为7。如果多次调用<literal>$x</literal>：
+			</para>
+
+			<programlisting><![CDATA[
+$x->(); $x->(); $x->();
+				]]></programlisting>
+
+			<para>
+				那么结果将是
+			</para>
+
+			<programlisting><![CDATA[
+n is 7
+n is 8
+n is 9
+				]]></programlisting>
+
+			<para>
+				新的结构图如<xref linkend="fg3-5"/>所示。
+			</para>
+
+			<figure id="fg3-5">
+				<graphic fileref="img/fg3-5.png"/>
+			</figure>
+
+			<para>
+				现在执行几次<literal>$y</literal>：
+			</para>
+
+			<programlisting><![CDATA[
+$y->(); $y->(); $y->();
+				]]></programlisting>
+
+			<para>
+				执行的代码是相同的，但这次是在<literal>$y</literal>的pad中查找<literal>$n</literal>，而不是在<literal>$x</literal>的pad中：
+			</para>
+
+			<programlisting><![CDATA[
+n is 20
+n is 21
+n is 22
+				]]></programlisting>
+
+			<para>
+				这次如<xref linkend="fg3-6"/>所示。
+			</para>
+
+			<figure id="fg3-6">
+				<graphic fileref="img/fg3-6.png"/>
+			</figure>
+
+			<para>
+				再次运行<literal>$x</literal>：
+			</para>
+
+			<programlisting><![CDATA[
+n is 10
+				]]></programlisting>
+
+			<para>
+				这里的<literal>$n</literal>跟头三次调用<literal>$x</literal>时的<literal>$n</literal>是同一个变量，而且仍然保持着当时的值 。
+			</para>
+		</sect2>
+
+
+		<sect2 id="sect3-5-3">
+			<title>再议Memoization</title>
+
+			<para>
+				前面这些讨论都是为了解释<literal>memoize</literal>函数的工作原理而做的铺垫。也许你会认为这只是鸡毛蒜皮——“它显然能正常工作啊！”——但实际上应该注意到，许多语言中这种方式无法正常工作，也不可能使之正常工作。这里面涉及了几个重要且复杂的特性：延迟垃圾回收，绑定，匿名函数生成，以及文法闭包。假如想在C语言中实现类似<literal>memoize</literal>的函数，那可就一头雾水了，因为C语言中这些特性一个都没有。（参见<xref linkend="sect3-11"/>）。
+			</para>
+		</sect2>
+	</sect1>
+
+	<sect1 id="sect3-6">
+		<title>警告</title>
+
+		<para>
+			显然，memoization并不是解决所有性能问题的灵丹妙药。甚至并不是所有函数都能被memoized。有几种函数不应被memoized。
+		</para>
+
+		<sect2 id="sect3-6-1">
+			<title>返回值不完全由参数决定的函数</title>
+
+			<para>
+				memoization最适合那些返回值只取决于参数的函数。想想就知道，去memoize一个取得当前时间的函数将是多么愚蠢：第一次调用时获取当前的时间，而以后的的调用都会返回<emphasis>相同</emphasis>的时间。同样，memoize一个随机数生成函数也是不合理的。
+			</para>
+
+			<para>
+				另外，那些返回值表明成功还是失败的函数也不宜memoize。每次调用都返回相同的结果，这肯定不是你所希望的。
+			</para>
+
+			<para>
+				但是，有些这种函数是可以memoize的。例如，函数的结果依赖于当前的小时数，并且程序执行时间很长，那么memoize就可能取得较好的效果。（处理这种函数的方法请参见<xref linkend="sect3-7"/>）。
+			</para>
+		</sect2>
+
+		<sect2 id="sect3-6-2">
+			<title>有副作用的函数</title>
+
+			<para>
+				许多函数的用处并不在于返回值，而在于它们的副作用。设想你写了个程序，用于将计算机的运行时间整理成固定格式的报表，并将报表发送到打印机去打印。也许你并不关心返回值，此时缓存就毫无意义了。就算返回值有意义，也不应当memoization。否则，尽管函数第二次以后的执行速度会快很多，但这根本不会给老板留下好印象，因为它只是立刻返回了缓存中旧的返回值，而没去真正打印报表。
+				<footnote>
+					<para>
+						有时我会设想，要是把Unix的<literal>fork()</literal>函数给memoized了会怎样。
+					</para>
+				</footnote>
+			</para>
+		</sect2>
+
+		<sect2 id="sect3-6-3">
+			<title>返回引用的函数</title>
+
+			<para>
+				这个问题有点难以理解。如果函数返回引用，并且函数调用者可能会修改引用所指向的那个值，那么就决不能将该函数memoize。
+			</para>
+
+			<para>
+				考虑下面的例子：
+			</para>
+
+			<programlisting><![CDATA[
+use Memoize;
+
+sub iota {
+  my $n = shift;
+  return [1 .. $n];
+}
+memoize 'iota';
+
+$i10 = iota(10);
+$j10 = iota(10);
+pop @$i10;
+print @$j10;
+				]]></programlisting>
+
+			<para>
+				第一次调用<literal>iota(10)</literal>生成一个新的匿名数组，内容为1到10的数字，并返回该数组的引用。缓存中保存了这个引用，变量<literal>$i10</literal>也保存了它。第二次调用<literal>iota(10)</literal>将从缓存中取出这个引用，并保存到<literal>$j10</literal>中。现在<literal>$i10</literal>和<literal>$j10</literal>都指向同一个数组，这种情况我们说它们是数组的<emphasis>别名</emphasis>。
+			</para>
+
+			<para>
+				如果通过<literal>$i10</literal>这个别名修改了数组的值，就同样会影响到保存在<literal>$j10</literal>中的值！这并不是函数调用者希望的动作，况且，如果没有memoize<literal>iota</literal>的话，这种情况也不会发生。Memoization应当是一种优化措施，也就是说，应当在不改变程序行为的前提下去加速。
+			</para>
+
+			<para>
+				不能memoize返回引用的函数这条禁则，对于面向对象的构造方法同样适用。例如：
+			</para>
+
+			<programlisting><![CDATA[
+package Octopus;
+sub new {
+  my ($class, %args) = @_;
+  $args{tentacles} = 8;
+  bless \%args => $class;
+}
+
+sub name {
+  my $self = shift;
+  if (@_) { $self->{name} = shift }
+  $self->{name};
+}
+
+my $junko = Octopus->new(favorite_food => "crab cakes");
+$junko->name("Junko");
+my $fenchurch = Octopus->new(favorite_food => "crab cakes");
+$fenchurch->name("Fenchurch");
+
+# 下面会输出 "Fenchurch" -- 显然是错误的!
+print "The name of the FIRST octopus is ", $junko->name, "\n";
+				]]></programlisting>
+
+			<para>
+				此处，程序员想要生成两条不同的octopus（章鱼），一个名为“Junko”，另一个名为“Fenchurch”。两条octopus都喜欢crab cake。很不幸，有人愚蠢地将<literal>new()</literal>函数memoize了。由于第二次调用时传递的参数与第一次相同，memoization stub就从缓存中返回了第一次调用的结果，即指向“Junko”对象的引用。程序员认为它们是两只不同的octopus，但实际上只有一只，冒充成两只而已。
+			</para>
+
+			<para>
+				那些返回值仅依赖于参数，没有副作用，并且返回值不是引用的函数，称为<emphasis>纯函数</emphasis>。尽管对某些非纯函数也可以应用缓存技术，但纯函数才是它们施展才华的地方。
+			</para>
+		</sect2>
+
+		<sect2 id="sect3-6-4">
+			<title>memoize过的时钟？</title>
+
+			<para>
+				非纯函数加缓存的一个简单且颇具启发性的例子就是Perl的<literal>$^T</literal>变量。Perl提供了几个方便的文件操作符，如<literal>-M $filename</literal>，可以返回参数指定的那个文件的最后修改时间距离现在经过了多少天。计算方法是，首先从操作系统中获取文件的最后修改时间，然后从中减去当前时间，再转换成天数。<literal>-M</literal>可能经常被调用，所以执行速度非常关键。例如：
+			</para>
+
+			<programlisting><![CDATA[
+@result = sort { -M $a <=> -M $b } @files;
+				]]></programlisting>
+
+			<para>
+				这行代码可以按照文件最终修改时间将文件排序。获取大量文件的最终修改时间的开销已经很大，再去执行数千次<literal>$time()</literal>更是雪上加霜。更糟糕的是，操作系统的时间是精确到秒的，如果在执行<literal>sort()</literal>的过程中系统时钟恰好经过了疫苗，那么排序结果就有可能不正确！
+			</para>
+
+			<para>
+				为了避免这个问题，Perl在执行<literal>-M</literal>操作时并不去查找当前时间，而是在程序启动时，将当前时间缓存到<literal>$^T</literal>变量中，利用它来计算<literal>-M</literal>。大部分程序的执行时间都很短，也不需要<literal>-M</literal>的精确结果，所以通常这个方法很不错。运行时间特别长的函数应当定期执行<literal>$^T = time()</literal>来刷新<literal>$^T</literal>，避免<literal>-M</literal>的结果与正确结果偏离太远。在缓存非纯函数时，最好提供一个过期机制，使得旧的缓存值被丢弃并更新。允许程序员更新整个缓存也很有必要。<literal>Memoize</literal>模块提供了加入缓存过期管理的方法。
+			</para>
+		</sect2>
+
+		<sect2 id="sect3-6-5">
+			<title>特别快的函数</title>
+			<para>
+				有一次我跟一名程序员讨论，他说他memoize了一个函数之后，函数不仅没有变快，反而更慢了。原来，他试图加速的函数是这样的：
+			</para>
+
+			<programlisting><![CDATA[
+sub square { $_[0] * $_[0] }
+				]]></programlisting>
+
+			<para>
+				跟其他技术一样，缓存是一把双刃剑。你可能得到减少原始函数调用次数的好处，但代价就是函数必须在每次调用时去检查缓存。之前我们讨论过<inlineequation><textobject><phrase>hf - K</phrase></textobject></inlineequation>这个公式，它表示了memoization能节约的时间。如果<inlineequation><textobject><phrase>hf &lt; K</phrase></textobject></inlineequation>，memoize过的函数就比没有memoize的函数要慢。<inlineequation><textobject><phrase>h</phrase></textobject></inlineequation>是缓存命中率，取值在0到1之间。<inlineequation><textobject><phrase>f</phrase></textobject></inlineequation>是原始函数的执行时间，<inlineequation><textobject><phrase>K</phrase></textobject></inlineequation>是检查缓存所用的平均时间。如果<inlineequation><textobject><phrase>f</phrase></textobject></inlineequation>小于<inlineequation><textobject><phrase>K</phrase></textobject></inlineequation>，那么<inlineequation><textobject><phrase>hf &lt; K</phrase></textobject></inlineequation>就不可避免了。如果检查缓存的开销大于调用原始函数的开销，就完全不应该memoize。因为你无法通过减少“不必要”的调用来节约时间，因为判断哪个调用是不必要的，比直接调用函数还要慢。
+			</para>
+
+			<para>
+				上述<literal>square</literal>的例子中，函数只是在做简单的乘法。检查缓存要用到散列查找，它包括计算散列值（许多乘法和加法）、在散列的桶数组中查找，可能还要搜索链表。这显然不会比简单的乘法更快。实际上，很少有操作能快过单个乘法的。<literal>square</literal>函数无法通过memoization或者其他技术来加速，因为它已几乎是所有函数中最快的了。
+			</para>
+		</sect2>
+	</sect1>
+
+	<sect1 id="sect3-7">
+		<title>键生成</title>
+
+		<para>
+			前面所示的memoize函数至少存在一个很严重的问题。它需要将函数参数转换成散列的键，而它是使用<literal>join</literal>来实现的：
+		</para>
+
+		<programlisting><![CDATA[
+my $key = join ',', @_;
+			]]></programlisting>
+
+		<para>
+			这种方法只能应用在只有一个参数的函数，或者参数中绝不会出现逗号的情况，如参数是数字的函数。但如果函数参数包含逗号的话，就有可能失败，比如下面两个调用，计算出的键是一样的：
+		</para>
+
+		<programlisting><![CDATA[
+func("x,", "y");
+func("x", ",y");
+			]]></programlisting>
+
+		<para>
+			执行第一个调用时，返回值将使用<literal>"x,,y"</literal>这个键保存到缓存中。但执行第二个调用却不会调用真正的函数，而是直接返回第一个调用保存在缓存中的值。但实际上，函数应该返回不同的值。memoization的代码弄混了这两个参数，错误地认为缓存命中了。
+		</para>
+
+		<para>
+			由于只有在参数包含逗号时才会发生，因此可以不考虑它。就算函数真的会包含逗号，我们还可以用其他不可能出现的字符。有时可以使用Perl的特殊变量<literal>$;</literal>。通常，它的值是ASCII字符<literal>#28</literal>，它是Ctrl+\产生的字符。如果键生成算法为<literal>join $;, @_</literal>的话，就只有当函数参数中包含Ctrl+\时才会出错，而基本上可以断定这是不可能的。不过，有些函数的参数包含几乎任何字符，因此这些技巧并不完全可靠。
+		</para>
+
+		<para>
+			还有别的办法。总能找到一种方法，可以将任何数据结构（如参数列表）忠实地转换成字符串，保证不同的结构可以转成不同的字符串。
+			<footnote>
+				<para>
+					如果难以理解，可以这样考虑：两种数据结构在内存中的表示方式总会有差异，而计算机的内存不过是个超长字符串而已。
+				</para>
+			</footnote>
+		</para>
+
+		<para>
+			一种方法是使用<literal>Storable</literal>或<literal>FreezeThaw</literal>模块，将参数列表转换成字符串。更有效的方法是使用转义序列：
+		</para>
+
+		<programlisting><![CDATA[
+my @args = @_;
+s/([\\,])/\\$1/g for @args;
+my $key = join ",", @args;
+			]]></programlisting>
+
+		<para>
+			在原始参数中的每个逗号或反斜杠之前加入一个反斜杠，然后用不带反斜杠的逗号将各个参数连接起来。这样，前面有问题的调用就可以解决了，因为两个不同的参数列表将被转换成不同的键，一个是<literal>'x\,,y'</literal>，另一个是<literal>'x,\,y'</literal>。（练习：为什么反斜杠之前同样要加入反斜杠？）
+		</para>
+
+		<para>
+			但是，这种修正方法会付出巨大的性能代价。字符转义的代码要比简单的<literal>join</literal>慢上许多倍，即使对于像<literal>(1,2)</literal>这样的简单参数列表，也会慢上十倍左右，而且，<emphasis>每次</emphasis>调用函数时都必须执行它。通常我们会嘲笑那些一味追求速度而忽视了正确性的做法，执行得再快，答案也是错误的。但现在这个状况不太一样。由于memoization的唯一目的就是提高函数的速度，因此额外开销越小越好。
+		</para>
+
+		<para>
+			取个折中的办法。<literal>memoize</literal>的默认动作很快，但并不是所有情况都正确。那么，可以试着让使用<literal>memoize</literal>的人自行改正错误。如果使用者不想使用默认的键生成算法，可以自行给出算法供<literal>memoize</literal>使用。
+		</para>
+
+		<para>
+			修改本身很简单：
+		</para>
+
+		<programlisting id="memoize-norm1"><![CDATA[
+sub memoize {
+  my ($func, $keygen) = @_;
+  my %cache;
+  my $stub = sub {
+    my $key = $keygen ? $keygen->(@_) : join ',', @_;
+    $cache{$key} = $func->(@_) unless exists $cache{$key};
+    return $cache{$key};
+  };
+  return $stub;
+}
+			]]></programlisting>
+
+		<para>
+			<literal>memoize</literal>返回的stub函数首先要检查，原始函数被memoize时是否提供了<literal>$keygen</literal>函数。如果有，就使用<literal>keygen</literal>函数去生成散列键，否则，就使用默认的生成算法。多出的检查操作的代价几乎可以忽略不计，但如果在函数被memoize时进行检查，就只需检查$keygen一次，不必在每次调用memoize过的函数时都去检查，这样这点代价也可以消除掉：
+		</para>
+
+		<programlisting id="memoize-norm2"><![CDATA[
+sub memoize {
+  my ($func, $keygen) = @_;
+  my %cache;
+  my $stub = $keygen ?
+    sub { my $key = $keygen->(@_);
+          $cache{$key} = $func->(@_) unless exists $cache{$key};
+          return $cache{$key};
+        }
+  :
+    sub { my $key = join ',', @_;
+          $cache{$key} = $func->(@_) unless exists $cache{$key};
+          return $cache{$key};
+        }
+  ;
+  return $stub;
+}
+			]]></programlisting>
+
+		<para>
+			还有更好的技巧。上面各种<literal>memoize</literal>中，<literal>$keygen</literal>都是匿名函数，每次调用被memoize的函数时都要调用这个匿名函数。不幸的是，Perl中函数调用的代价相对较大。由于<literal>memoize</literal>的目的是要给函数加速，因此这点代价也要尽可能消除。
+		</para>
+
+		<para>
+			这就要用到Perl的<literal>eval</literal>功能。不要将<literal>$keygen</literal>指定为键生成函数的引用，而是将它写成一段代码字符串，再将它直接写进stub函数中，这样stub函数就无需进行函数调用了。
+		</para>
+
+		<para>
+			这种<literal>memoize</literal>就得这样使用了：
+		</para>
+
+		<programlisting><![CDATA[
+$memoized = memoize(\&fib, q{my @args = @_;
+                                s/([\\,])/\\$1/g for @args;
+                                join ',', @args;
+                            });
+
+			]]></programlisting>
+
+		<para>
+			<literal>memoize</literal>首先将这一小段代码插入到函数模板中的适当位置（这种操作称为<emphasis>内联</emphasis>（<foreignphrase>inline</foreignphrase>）），再用<literal>eval</literal>把结果编译成真正的函数：
+		</para>
+
+		<programlisting id="memoize-norm3"><![CDATA[
+sub memoize {
+  my ($func, $keygen) = @_;
+  $keygen ||= q{join ',', @_};
+
+  my %cache;
+  my $newcode = q{
+    sub { my $key = do { KEYGEN };
+          $cache{$key} = $func->(@_) unless exists $cache{$key};
+          return $cache{$key};
+        }
+  };
+  $newcode =~ s/KEYGEN/$keygen/g;
+  return eval $newcode;
+}
+			]]></programlisting>
+
+		<para>
+			这里使用了Perl的<literal>q{...}</literal>操作符，它相当于<literal>'...'</literal>，但在<literal>q{...}</literal>内部单引号并不是特殊字符。如果这里不用<literal>q{...}</literal>，第三行就会比较晦涩了：
+		</para>
+
+		<programlisting><![CDATA[
+$keygen ||= 'join \',\', @_';
+			]]></programlisting>
+
+		<para>
+			这里我们不是简单地将$keygen的值放在双引号字符串中进行变量代换，而是使用<literal>s///</literal>操作符进行替换。可能这样效率比较低，但因为每次memoize一个函数时，这段代码只需执行一次，所以并不会造成问题。<literal>s///</literal>的好处是，<literal>$newcode</literal>变量很容易阅读，否则要是用了变量代换，就会变成这个样子：
+		</para>
+
+		<programlisting><![CDATA[
+my $newcode = "
+  sub { my \$key = do { $keygen };
+        \$cache{\$key} = \$func->(\@_) unless exists \$cache{\$key};
+        return \$cache{\$key};
+      }
+";
+			]]></programlisting>
+
+		<para>
+			可见，反斜杠让代码变得凌乱不堪。负责维护的程序员阅读这段代码时，满眼全是被反斜杠转义的东西，可能根本意识不到<literal>$keygen</literal>是要做变量代换的。而使用<literal>s///</literal>的方法就可以让<literal>KEYGEN</literal>能引人注意。
+		</para>
+
+		<para>
+			缓存管理的额外开销方面，本例的内联式<literal>memoize</literal>要比正常情况少大约37%。
+		</para>
+
+		<para>
+			稍加修改，可以让它仍然接受函数引用作为参数：
+		</para>
+
+		<programlisting id="memoize-norm4"><![CDATA[
+sub memoize {
+  my ($func, $keygen) = @_;
+  my $keyfunc;
+  if ($keygen eq '') {
+    $keygen = q{join ',', @_}
+  } elsif (UNIVERSAL::isa($keygen, 'CODE')) {
+    $keyfunc = $keygen;
+    $keygen = q{$keyfunc->(@_)};
+  }
+  my %cache;
+  my $newcode = q{
+    sub { my $key = do { KEYGEN };
+          $cache{$key} = $func->(@_) unless exists $cache{$key};
+          return $cache{$key};
+        }
+  };
+  $newcode =~ s/KEYGEN/$keygen/g;
+  return eval $newcode;
+}
+			]]></programlisting>
+
+		<para>
+			如果没有给出键生成函数，就插入<literal>join ',', @_</literal>。如果<literal>$keygen</literal>是函数引用，就不能简单地直接内联，否则它会返回类似于<literal>CODE(0x436c1d)</literal>的字符串。必须将函数引用保存在<literal>$keyfunc</literal>变量中，然后把通过<literal>$keyfunc</literal>调用该函数的代码作为内联的对象。
+		</para>
+
+		<para>
+			解释一下<literal>UNIVERSAL::isa($keygen, 'CODE')</literal>一行。此处的目的是检查<literal>$keygen</literal>是否为代码引用。你可能马上会想到这样做：
+		</para>
+
+		<programlisting><![CDATA[
+if (ref($keygen) eq 'CODE') { ... }
+			]]></programlisting>
+
+		<para>
+			很不幸，Perl的<literal>ref</literal>函数在这里行不通，因为它会混淆参数的两种属性。如果<literal>$keygen</literal>是个<emphasis>bless</emphasis>过的代码引用，上述检查就会失败，因为<literal>ref</literal>会返回<literal>$keygen</literal>被bless进的那个类的名字。使用<literal>UNIVERSAL::isa</literal>可以避免这个问题。另一种情况尽管极其罕见，但也有可能发生，就是这段代码对于非代码引用也可能得到true——如果有人糊涂地将非代码引用bless进名为<literal>CODE</literal>的类，就会出现这种情况。
+		</para>
+
+		<sect2 id="sect3-7-1">
+			<title>自定义键生成器的其他应用</title>
+
+			<para>
+				有了这些键生成器的特性，即使<literal>join</literal>方法在被memoize的函数上不能正常工作，调用<literal>memoize</literal>函数的人也能找到其他解决方法。只需换一个键生成器即可，用<literal>Storable</literal>也行，用转义字符也行，用任何合适的函数都行。
+			</para>
+
+			<para>
+				使用自定义键生成器，不仅能解决不同参数列表产生相同的键的问题，还能解决相反的问题——同样的参数列表却产生不同的键的问题。
+			</para>
+			<para>
+				假设某个函数的参数为散列，散列中可能有<literal>A</literal>、<literal>B</literal>或<literal>C</literal>中的任意键，可能全都有，也可能一个都没有。每个键都有相应的整数值。此外还假设，如果省略<literal>B</literal>，则默认值为17，<literal>A</literal>的默认值为32：
+			</para>
+
+			<programlisting><![CDATA[
+sub example {
+	my %args = @_;
+	$args{A} = 32 unless defined $args{A};
+	$args{B} = 17 unless defined $args{B};
+	# ...
+}
+				]]></programlisting>
+
+			<para>
+				那么下面这些调用方法都是等价的：
+			</para>
+
+			<programlisting><![CDATA[
+example(C => 99);
+example(C => 99, A => 32);
+example(A => 32, C => 99);
+example(B => 17, C => 99);
+example(C => 99, B => 17);
+example(A => 32, C => 99, B => 17);
+example(B => 17, A => 32, C => 99);
+(etc.)
+				]]></programlisting>
+
+			<para>
+				用<literal>join</literal>来生成键的话，每个键都不尽相同（<literal>"C,99"</literal>、<literal>"A,32,C,99"</literal>，<literal>"C,99,A,32"</literal>等）。结果，缓存管理器不得不调用真正的<literal>example()</literal>函数，失去了缓存命中的机会。调用<literal>example(A => 32, C => 99)</literal>的结果与<literal>example(C => 99, A => 32)</literal>的结果必然是相同的，但从表面上看，参数列表并不一样，所以缓存管理器我发作出判断。如果能让等价的参数列表转换成相同的散列键，缓存管理器就可以在<literal>example(C => 99, A => 32)</literal>时，返回之前<literal>example(A => 32, C => 99)</literal>计算出的值，而无需再次调用<literal>example</literal>。这样可以增加缓存命中率，即表示memoization的加速效果的公式<inlineequation><textobject><phrase>hf - K</phrase></textobject></inlineequation>中的<inlineequation><textobject><phrase>h</phrase></textobject></inlineequation>。下面的键生成器可以做到这一点：
+			</para>
+
+			<programlisting><![CDATA[
+sub {
+	my %h = @_;
+	$h{A} = 32 unless defined $h{A};
+	$h{B} = 17 unless defined $h{B};
+	join ",", @h{'A','B','C'};
+}
+				]]></programlisting>
+
+			<para>
+				这八个等价的调用（包括<literal>example(C => 99, A => 32)</literal>）从这个函数中得到的结果都是<literal>"32,17,99"</literal>。这里首先就付出了代价：这个键生成器花费的时间比简单的<literal>join</literal>多了将近十倍，因此公式<inlineequation><textobject><phrase>hf - K</phrase></textobject></inlineequation>中的<inlineequation><textobject><phrase>K</phrase></textobject></inlineequation>就比较大。这个代价是否值得，取决于实际函数调用消耗的时间<inlineequation><textobject><phrase>f</phrase></textobject></inlineequation>，以及通过该方法增加的缓存命中率<inlineequation><textobject><phrase>h</phrase></textobject></inlineequation>。一般来说，只能通过性能测试才能确定。
+			</para>
+		</sect2>
+
+		<sect2 id="sect3-7-2">
+			<title>带有参数正规化器的内联缓存管理器</title>
+
+			<para>
+				下面这个内联键生成代码的技巧很有意思。考虑下面这个函数，它从前面那个例子变化而来：
+			</para>
+
+			<programlisting><![CDATA[
+sub example {
+	my ($a, $b, $c) = @_;
+	$a = 32 unless defined $a;
+	$b = 17 unless defined $b;
+	# 这里进行其他的计算...
+}
+				]]></programlisting>
+
+			<para>
+				正确的键生成器如下：
+			</para>
+
+			<programlisting><![CDATA[
+my ($a, $b, $c) = @_;
+$a = 32 unless defined $a;
+$b = 17 unless defined $b;
+join ',', $a, $b, $c;
+				]]></programlisting>
+
+			<para>
+				总觉得有点不舒服——设置参数默认值的代码要写两次，还要去执行两次！如果把键生成代码改成下面这样，就可以省去<literal>example</literal>函数中的参数检查了：
+			</para>
+
+			<programlisting><![CDATA[
+$_[0] = 32 unless defined $_[0];
+$_[1] = 17 unless defined $_[1];
+join ',', @_;
+				]]></programlisting>
+
+			<para>
+				将这段代码放到<literal>memoize</literal>函数内，就成了这样：
+			</para>
+
+			<programlisting><![CDATA[
+sub { my $key = do { $_[0] = 32 unless defined $_[0];
+                     $_[1] = 17 unless defined $_[1];
+                     join ',', @_;
+                   };
+      $cache{$key} = $func->(@_) unless exists $cache{$key};
+      return $cache{$key};
+    }
+				]]></programlisting>
+
+			<para>
+				注意这里的处理。键的生成过程跟以前相同，但这里还有副作用：它修改了<literal>@_</literal>。如果缓存没有命中，被memoize的函数就使用修改后的<literal>@_</literal>调用<literal>$func</literal>。由于<literal>@_</literal>已被修改为包含默认值，所以原始函数中就可以省略设置默认值的代码：
+			</para>
+
+			<programlisting><![CDATA[
+sub example {
+  my ($a, $b, $c) = @_;
+## 键生成代码已经设置好了默认值
+## $a = 32 unless defined $a;
+## $b = 17 unless defined $b;
+  # more calculation here ...
+}
+				]]></programlisting>
+
+			<para>
+				当然，用这种方式修改了<literal>example</literal>后，重要的处理被移动到了键生成函数中，所以就没办法关闭memoization了。
+			</para>
+
+			<para>
+				该技巧的另一个危险之处是，修改<literal>@_</literal>可能会对调用者产生奇怪的副作用。<literal>@_</literal>中的元素是调用该函数时提供的参数的别名，在memoize的函数中直接给<literal>@_</literal>的元素赋值，会改变被memoize的函数之外的变量。下面是个简单的例子：
+			</para>
+
+			<programlisting><![CDATA[
+sub set_to_57 {
+  $_[0] = 57;
+}
+my $x = 119;
+set_to_57($x);
+				]]></programlisting>
+
+			<para>
+				尽管赋值发生在<literal>$x</literal>的作用于之外，但这段代码确实能将<literal>$x</literal>设为57，就像直接执行<literal>$x = 57</literal>一样。键生成函数中的赋值语句也有类似的副作用。
+			</para>
+
+			<para>
+				Perl的这种特性有时很有用，但大部分情况下，它带来的麻烦远远超过它的价值，通常应当避免这种用法。永远不要直接操作<literal>@_</literal>，而应当在函数被调用后，立即将它的内容复制到一系列文法变量中：
+			</para>
+
+			<programlisting><![CDATA[
+sub safe_function {
+  my ($n) = @_;
+  $n = 57; # *不会*将 $x 设置为 57
+}
+
+my $x = 119;
+safe_function($x);
+				]]></programlisting>
+
+			<para>
+				组合这几种技巧可以得到新的键生成器，既能消除真实函数中设置默认值的代码，又能保证安全：
+			</para>
+
+			<programlisting><![CDATA[
+memoize(\&example, q{
+  my ($a, $b, $c) = @_;
+  $a = 32 unless defined $a;
+  $b = 17 unless defined $b;
+  @_ = ($a, $b, $c);           # 第5行
+  join ',', @_;
+});
+				]]></programlisting>
+
+			<para>
+				<literal>@_</literal>的元素是调用者提供的参数的别名，但<literal>@_</literal>本身不是。第5行给<literal>@_</literal>赋值不会覆盖调用者的值，而是完全抛弃原来的别名，并用新的值替换<literal>@_</literal>的内容。只有将键生成器内联到被memoize的函数的情况下这个技巧才有用。如果以函数的形式调用键生成代码，那么对<literal>@_</literal>作出的改变在函数返回后不会产生任何效果。
+			</para>
+
+		</sect2>
+
+		<sect2 id="sect3-7-3">
+			<title>带有引用参数的函数</title>
+
+			<para>
+				自定义键生成器的功能还解决了另一个问题。考虑如下函数：
+			</para>
+
+			<programlisting><![CDATA[
+sub is_in {
+  my ($needle, $haystack) = @_;
+  for my $item (@$haystack) {
+    return 1 if $item == $needle;
+  }
+  return;
+}
+				]]></programlisting>
+
+			<para>
+				该函数带有两个参数，<literal>$needle</literal>是个数字，<literal>$haystack</literal>是一系列数字，当且仅当<literal>$haystack</literal>中包含了<literal>$needle</literal>时才返回真。通常这样调用：
+			</para>
+
+			<programlisting><![CDATA[
+if (is_in($my_id, \@employee_ids)) { ... }
+				]]></programlisting>
+
+			<para>
+				如果要memoize<literal>is_in</literal>，但可能会遇到一个问题：参数<literal>$haystack</literal>是个引用。用<literal>join</literal>函数处理的话，该参数就会变成<literal>ARRAY(0x436c1d)</literal>这样的字符串。稍后再次调用<literal>is_in()</literal>时，即使<literal>$haystack</literal>指向另一个内容完全相同的数组，得到的键值也不尽相同；反之，如果<literal>@employee_ids</literal>的内容发生改变，但键值会保持不变。这两种情况都不满足要求。键生成器从数组的标识中生成键，但<literal>is_in()</literal>函数并不关心数组的标识，只关心它的内容。更恰当的键生成函数应当这样写：
+			</para>
+
+			<programlisting><![CDATA[
+sub { join ",", $_[0], @{$_[1]} }
+				]]></programlisting>
+
+			<para>
+				同样，这样做能否改善性能，取决于许多难以预测的情况。如果性能十分重要，最好还是收集真实的数据。长期经验表明，即使是专家，有时也会对哪个快哪个慢作出错误的判断。
+			</para>
+		
+
+		</sect2>
+
+		<sect2 id="sect3-7-4">
+			<title>划分</title>
+
+			<para>
+				<xref linkend="ch01"/>的<literal>find_share</literal>函数作为memoization改善递归性能的例子十分合适，只需给它一个键生成器：
+			</para>
+
+			<programlisting><![CDATA[
+sub find_share {
+  my ($target, $treasures) = @_;
+  return [] if $target == 0;
+  return    if $target<0|| @$treasures == 0;
+  my ($first, @rest) = @$treasures;
+  my $solution = find_share($target-$first, \@rest);
+  return [$first, @$solution] if $solution;
+  return         find_share($target       , \@rest);
+}
+				]]></programlisting>
+
+			<para>
+				调用该函数时，需要提供一个财宝的数组和一个目标值，它就能从中找出等于目标值的财宝的子集。如果存在这样的自己，就返回一个数组，否则返回<literal>undef</literal>。
+			</para>
+
+			<para>
+				在<xref linkend="ch01"/>中，该函数有与<literal>fib</literal>函数同样的问题：太慢，因为它在一遍又一遍地重复相同的工作。例如，从<literal>1 2 3 4 5 6 7 8 9 10</literal>选出一些使之合计为<literal>53</literal>的过程中，<literal>find_share</literal>会进行两次同样的计算：首先它发现 1+2+3+6=12，以此调用<literal>find_share(41, [7,8,9,10])</literal>，返回结果为未定义。之后，它又会发现1+2+4+5=12，于是再次调用<literal>find_share(41, [7,8,9,10])</literal>。显然，这种情况下很适合使用缓存。
+			</para>
+
+			<para>即使是这么简单的例子，使用memoization也能提高大约68%的速度。更大的情况如<literal>find_share(200, [1..20])</literal>，加速效果更明显，大约是82%。某些情况下，memoization甚至能让不可能成为可能。未经过memoize的<literal>find_share([1..20],210)</literal>要比memoize过的函数多花<emphasis>几千倍</emphasis>的时间。（我使用的键生成函数为<literal>sub {join "-", @{$_[1]}, $_[0]}</literal>。）
+			</para>
+		</sect2>
+
+		<sect2 id="sect3-7-5">
+			<title>用于非纯函数的自定义键生成器</title>
+
+			<para>
+				自定义键生成器也可以用来处理非纯函数，即依赖于自身参数之外的其他信息的函数。
+			</para>
+
+			<para>
+				设想一个需要长时间运行的网络服务器程序，它的任务是销售某种产品，如比萨饼或武器级别的钚。一块比萨饼或一罐钚的价格中包括运费，而运费与当前时间和星期几有关。周末和夜晚的运费要贵得多，因为负责物流的工作人员很少，而且没有人愿意工作到凌晨三点。
+				<footnote>
+					<para>
+						尽管运费高昂，绝大部分钚的订单是在深夜下达的。
+					</para>
+				</footnote>
+				服务器上可能会有这样一个函数：
+			</para>
+
+			<programlisting id="delivery-charge"><![CDATA[
+sub delivery_charge {
+  my ($quantity_ordered) = @_;
+  my ($hour, $day_of_week) = (localtime)[2,6];
+  # 通过 $weight, $gross_cost, $hour, $day_of_week, 和
+  # $quantity_ordered 进行复杂计算
+  # ...
+  return $delivery_charge;
+}
+				]]></programlisting>
+
+			<para>
+				函数很复杂，可以考虑 memoize。默认的键生成器<literal>join(',', @_)</literal>无法用在这里，因为它没考虑到运费与实践的关系。不过这个问题很容易解决，用以下的自定义键生成器即可：
+			</para>
+
+			<programlisting><![CDATA[
+sub delivery_charge_key {
+  join ',', @_, (localtime)[2,6];
+}
+				]]></programlisting>
+
+			<para>
+				<literal>delivery_charge</literal>并不是纯函数，但在本例中这并不是问题。唯一的问题是，缓存命中率是否能带来性能改善。可以想象，第一周缓存很难命中，但当新的一周开始时，命中率就开始升高。本例中缓存的效果依赖于程序长时间运行。类似地可以想到，要是把键生成器写成下面这样的话效果会不会更好些？
+			</para>
+
+			<programlisting><![CDATA[
+sub delivery_charge_key {
+	my ($hour, $day_of_week) = (localtime)[2,6];
+	my $weekend = $day_of_week == 0 || $day_of_week == 6;
+	join ',', @_, $hour, $weekend;
+}
+				]]></programlisting>
+
+			<para>
+				该函数执行时间更长，但能获得更高的命中率，因为星期一记录下来的缓存数据可以用在星期二、星期三。同样，程序行为的细微之处决定了哪个键生成器更好。
+			</para>
+		</sect2>
+
+	</sect1>
+
+	<sect1 id="sect3-8">
+		<title>在对象的方法中缓存</title>
+
+		<para>
+			在对象方法中，就很难将缓存值保存在单独的散列中了。设想某个投资银行编写的<literal>Investor</literal>对象。该对象代表了银行的一位客户：
+		</para>
+
+		<programlisting><![CDATA[
+package Investor;
+
+# 计算当前总投资额
+sub total {
+  my $self = shift;
+  # ... 这里进行复杂的计算 ...
+  return $total;
+}
+			]]></programlisting>
+
+		<para>
+			如果预测<literal>$total</literal>不会变，就可以将其缓存，用对象的标识作为缓存散列的键：
+		</para>
+
+		<programlisting><![CDATA[
+# 计算当前总投资额
+{ my %cache;
+  sub total {
+    my $self = shift;
+    return $cache{$self} if exists $cache{$self};
+    # ... 这里进行复杂的计算 ...
+    return $cache{$self} = $total;
+  }
+}
+			]]></programlisting>
+
+		<para>
+			但是，该方法有个严重问题。使用对象作为散列键，Perl会首先将其转换成字符串。通常散列键会像这样：<literal>Investor=HASH(0x80ef8dc)</literal>。十六进制数字是对象数据实际保存位置的地址。
+		</para>
+	</sect1>
+</chapter>

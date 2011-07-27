@@ -1,0 +1,1875 @@
+<chapter id="ch01">
+	<title>递归和回调函数</title>
+	<para>
+		我们要讨论的第一个“高级”技巧就是递归。
+		<emphasis>递归</emphasis>是通过把问题转化成同类型的更简单的问题的方式来解决问题的方法。
+	</para>
+
+	<!-- ============================================================ -->
+	<sect1 id="sect1-1">
+		<title>十进制转换成二进制</title>
+
+		<para>
+			Perl 5.6.0发布以前，想在Perl中生成二进制数并没什么好办法。从5.6.0起可以使用<literal>sprintf("%b", $num)</literal>来转换，但在此以前却是个经常困扰人的问题。
+		</para>
+
+		<para>
+			任意整数都可以表示成<inlineequation><textobject><phrase>2k+b</phrase></textobject></inlineequation>的形式，其中<inlineequation><textobject><phrase>k</phrase></textobject></inlineequation>是个较小的整数，<inlineequation><textobject><phrase>b</phrase></textobject></inlineequation>为0或1。<inlineequation><textobject><phrase>b</phrase></textobject></inlineequation>就是二进制的最后一位。要判断最后一位是0还是1很容易，只需检查输入数字是偶数还是奇数即可。剩下的数字是<inlineequation><textobject><phrase>2k</phrase></textobject></inlineequation>，它的二进制与<inlineequation><textobject><phrase>k</phrase></textobject></inlineequation>相同，只是向左移动了一位而已。例如，37 = 2·18 + 1，这里<inlineequation><textobject><phrase>k</phrase></textobject></inlineequation>为18而<inlineequation><textobject><phrase>b</phrase></textobject></inlineequation>为1，因此37的二进制形式（100101）就等于18的二进制形式（10010）末尾加了一个1。
+		</para>
+
+		<para>
+			那么怎样计算37的二进制？37是个奇数，所以最后一位必然为1，而其余部分与18的二进制相同。那么如何计算18的二进制？18为偶数，所以最后一位是0，其余部分与9的二进制相同。如何计算9的二进制？9是奇数，因此最后一位是1，其余部分与4的二进制相同。这样反复进行，最后会计算1的二进制，结果显然是1。
+		</para>
+
+		<para>
+			这个过程适用于任意整数。计算整数<inlineequation><textobject><phrase>n</phrase></textobject></inlineequation>的过程如下：
+		</para>
+
+		<orderedlist>
+			<listitem>
+				<para>
+					如果<inlineequation><textobject><phrase>n</phrase></textobject></inlineequation>为1，则二进制为1，可以忽略其余步骤。类似地，如果<inlineequation><textobject><phrase>n</phrase></textobject></inlineequation>为0，二进制也就是0。否则：
+				</para>
+			</listitem>
+			<listitem>
+				<para>
+					计算<inlineequation><textobject><phrase>k</phrase></textobject></inlineequation>和<inlineequation><textobject><phrase>b</phrase></textobject></inlineequation>，使得<inlineequation><textobject><phrase>n = 2k + b</phrase></textobject></inlineequation>并且<inlineequation><textobject><phrase>b = </phrase></textobject></inlineequation>0或1。只需将<inlineequation><textobject><phrase>n</phrase></textobject></inlineequation>除以2，那么<inlineequation><textobject><phrase>k</phrase></textobject></inlineequation>为商，<inlineequation><textobject><phrase>b</phrase></textobject></inlineequation>为余数，当<inlineequation><textobject><phrase>n</phrase></textobject></inlineequation>为偶数时等于0，<inlineequation><textobject><phrase>n</phrase></textobject></inlineequation>为奇数时等于1。
+				</para>
+			</listitem>
+			<listitem>
+				<para>
+					使用同样的方法计算<inlineequation><textobject><phrase>k</phrase></textobject></inlineequation>的二进制，结果表示为<inlineequation><textobject><phrase>E</phrase></textobject></inlineequation>。
+				</para>
+			</listitem>
+			<listitem>
+				<para>
+					<inlineequation><textobject><phrase>n</phrase></textobject></inlineequation>的二进制即为<inlineequation><textobject><phrase>Eb</phrase></textobject></inlineequation>。
+				</para>
+			</listitem>
+		</orderedlist>
+
+		<para>
+			接下来建立一个名为<literal>binary()</literal>的函数来计算二进制。下面是声明部分和第一步：
+		</para>
+
+		<programlisting id="binary"><![CDATA[
+sub binary {
+  my ($n) = @_;
+  return $n if $n == 0 || $n == 1;
+		]]></programlisting>
+
+		<para>
+			下面是第二步：
+		</para>
+
+		<programlisting><![CDATA[
+  my $k = int($n/2);
+  my $b = $n % 2;
+		]]></programlisting>
+
+		<para>
+			第三步需要计算<inlineequation><textobject><phrase>k</phrase></textobject></inlineequation>的二进制。怎么办？很简单，有个很好用的函数可以计算二进制，那就是<literal>binary()</literal>——或者说，等它写完之后就有了。用<inlineequation><textobject><phrase>k</phrase></textobject></inlineequation>作为参数调用<literal>binary()</literal>：
+		</para>
+
+		<programlisting><![CDATA[
+  my $E = binary($k);
+		]]></programlisting>
+
+		<para>
+			最后一步为字符串连接：
+		</para>
+
+		<programlisting><![CDATA[
+  return $E . $b;
+}
+		]]></programlisting>
+
+		<para>
+			这个函数能很好地运行。比如，调用<literal>binary(37)</literal>，就会得到字符串<literal>100101</literal>。
+		</para>
+
+		<para>
+			这里的重点是要将问题转变成简单的情况。假设要得到数字<inlineequation><textobject><phrase>n</phrase></textobject></inlineequation>的二进制。我们发现它的二进制相当于一个小一点的数字<inlineequation><textobject><phrase>k</phrase></textobject></inlineequation>的二进制与一个二进制位<inlineequation><textobject><phrase>b</phrase></textobject></inlineequation>的结合。而求解<inlineequation><textobject><phrase>k</phrase></textobject></inlineequation>的二进制属于同一问题，但更为简单，所以只需在<literal>binary(),</literal>的定义中调用自己即可。当调用<literal>binary()</literal>并传递数字作为参数时，它会调用<literal>binary()</literal>计算另一个较小数字的二进制，相应地继续调用<literal>binary()</literal>计算更小的数字的二进制。最终，参数会变成1，<literal>binary()</literal>只需直接求出它的二进制即可。
+		</para>
+
+		<para>
+			最后一步十分重要，称为递归的<emphasis>基线操作</emphasis>（<foreignphrase>base-case</foreignphrase>）。如果没有基线操作，函数就永远不会结束。如果在<literal>binary()</literal>的定义中省略了这一行：
+		</para>
+
+		<programlisting><![CDATA[
+  return $n if $n == 0 || $n == 1;
+		]]></programlisting>
+
+		<para>
+			那么<literal>binary()</literal>就会一直计算下去，不会返回任何结果。
+		</para>
+
+	</sect1>
+
+	<!-- ============================================================ -->
+
+	<sect1 id="sect1-2">
+		<title>阶乘</title>
+
+		<para>
+			假设有一组由<inlineequation><textobject><phrase>n</phrase></textobject></inlineequation>个不同的元素。为说明得具体些，我们假设这些元素是英文字母。那么，它们有多少种不同的排列顺序？显然，结果取决于<inlineequation><textobject><phrase>n</phrase></textobject></inlineequation>，所以结果是<inlineequation><textobject><phrase>n</phrase></textobject></inlineequation>的函数。该函数称为<emphasis>阶乘函数</emphasis>（<foreignphrase>factorial function</foreignphrase>）。<inlineequation><textobject><phrase>n</phrase></textobject></inlineequation>的阶乘就是<inlineequation><textobject><phrase>n</phrase></textobject></inlineequation>个不同元素的不同排列顺序的数目。数学家通常用感叹号来表示，所以<inlineequation><textobject><phrase>n</phrase></textobject></inlineequation>的阶乘可以写为<inlineequation><textobject><phrase>n!</phrase></textobject></inlineequation>。不同的顺序也称为<emphasis>排列</emphasis>（<foreignphrase>permutation</foreignphrase>）。
+			下面来计算几个阶乘。显然，一个元素的排列方法只有一种，所以 1!=1。两个元素有两种排列方式：<literal>A-B</literal>和<literal>B-A</literal>，因此 2!=2。稍稍动一动笔，就会发现三个元素有六种排列方式：
+		</para>
+		<programlisting><![CDATA[
+C  AB      C  BA
+A C B      B C A
+AB  C      BA  C
+			]]></programlisting>
+		<para>
+			怎样才能保证没有漏掉任何情况？找出一个构建每一种可能的组合的方法并不难，在第4章(TODO)我们将介绍一个程序，它能列出所有排列。这里介绍另一种方法。在由两个元素组成的排列中添加一个新元素，就能组成含有三个元素的任意排列。两个元素的排列有两种情况：<literal>AB</literal>和<literal>BA</literal>。 每种排列下，都可以将<literal>C</literal>放在三个地方：开头，中间，或结尾。因此可作出的选择有 2·3 = 6 中，并且由于每种选择都会生成不同的排列，所以总共必然有六种排列。上述列表的左边那一列是将<literal>C</literal>插入到<literal>AB</literal>中的情况，右边那列是将<literal>C</literal>插入到<literal>BA</literal>的情况，所以上述结论是完整的。
+		</para>
+
+		<para>
+			类似地，如果想知道四个元素有多少种排列，可以使用同样的方法。三个元素有六种排列，而插入第四个元素的位置有四个，所以总共有 6·4 = 24 种顺序：
+		</para>
+		<programlisting><![CDATA[
+D  ABC      D  ACB      D  BAC      D  BCA      D  CAB      D  CBA
+A D BC      A D CB      B D AC      B D CA      C D AB      C D BA
+AB D C      AC D B      BA D C      BC D A      CA D B      CB D A
+ABC  D      ACB  D      BAC  D      BCA  D      CAB  D      CBA  D
+			]]></programlisting>
+
+		<para>
+			接下来我们要写一个函数，对于任意<inlineequation><textobject><phrase>n</phrase></textobject></inlineequation>，它可以计算<inlineequation><textobject><phrase>n</phrase></textobject></inlineequation>个元素的排列数目。
+		</para>
+
+		<para>
+			刚才我们看到，如果知道了<inlineequation><textobject><phrase>n - 1</phrase></textobject></inlineequation>个元素的可能的排列数，就可以计算<inlineequation><textobject><phrase>n</phrase></textobject></inlineequation>个元素的排列数。从<inlineequation><textobject><phrase>n - 1</phrase></textobject></inlineequation>个元素的<inlineequation><textobject><phrase>(n - 1)!</phrase></textobject></inlineequation>种排列中取出一种，然后将第<inlineequation><textobject><phrase>n</phrase></textobject></inlineequation>个元素插入到排列中的<inlineequation><textobject><phrase>n</phrase></textobject></inlineequation>个可能的位置中，就可以得到<inlineequation><textobject><phrase>n</phrase></textobject></inlineequation>个元素的一种排列。因此，<inlineequation><textobject><phrase>n</phrase></textobject></inlineequation>个元素的总排列数为<inlineequation><textobject><phrase>(n-1)!·n</phrase></textobject></inlineequation>：
+		</para>
+
+		<programlisting id="factorial"><![CDATA[
+sub factorial {
+  my ($n) = @_;
+  return factorial($n-1) * $n;
+}
+			]]></programlisting>
+
+		<para>
+			哎呀，这个函数不行，不论给什么输入，都不会产生任何结果，原因是我们忘记了终止条件。要计算<literal>factorial(2)</literal>，它首先会去计算<literal>factorial(1)</literal>。要计算<literal>factorial(1)</literal>，它首先会去计算<literal>factorial(0)</literal>。要计算<literal>factorial(0)</literal>，它首先会去计算<literal>factorial(-1)</literal>。无穷无尽。要改正这一点，只需明确地告诉函数<inlineequation><textobject><phrase>0!</phrase></textobject></inlineequation>的值是什么，这样当它执行0时，就不需要再递归调用了：
+		</para>
+
+		<programlisting><![CDATA[
+sub factorial {
+  my ($n) = @_;
+  return 1 if $n == 0;
+  return factorial($n-1) * $n;
+}
+			]]></programlisting>
+
+		<para>
+			现在它就可以正确执行了。
+		</para>
+
+		<para>
+			至于为何0的阶乘是1，恐怕并不是那么一目了然。回过头来看看阶乘的定义。<literal>factorial($n)</literal>是给定的<literal>$n</literal>个元素的不同排列的数目。<literal>factorial(2)</literal>等于2，因为两个元素有两种排列：<literal>('A', 'B')</literal>和<literal>('B', 'A')</literal>。<literal>factorial(1)</literal>等于1，因为一个元素只有一种排列：<literal>('A')</literal>。<literal>factorial(0)</literal>等于1，因为零个元素只有一种排列方式：<literal>( )</literal>。可能有人要说0!应该等于0，但从上面<literal>( )</literal>的例子可以清楚地看到并非如此。
+		</para>
+
+		<para>
+			在递归函数中正确地选择基线操作极其重要，如果弄错了，函数的所有其他结果也都不会正确。如果前面的函数没有<literal>return 1</literal>，而是错误地<literal>return 0</literal>，那么它就无法计算阶乘，而是永远返回零。
+		</para>
+
+
+		<sect2 id="sect1-2-1">
+			<title>私有变量的重要性</title>
+
+			<para>
+				接下来花点时间看看如果不写<literal>my</literal>会怎样。下面这个<literal>factorial()</literal>跟前面那个几乎一模一样，只是在<literal>$n</literal>前面少了<literal>my</literal>声明：
+			</para>
+
+			<programlisting id="factorial-broken"><![CDATA[
+sub factorial {
+  ($n) = @_;
+  return 1 if $n == 0;
+  return factorial($n-1) * $n;
+}
+				]]></programlisting>
+
+			<para>
+				这样，由于任何没有声明成<literal>my</literal>的Perl变量都是全局的，所以<literal>$n</literal>是全局变量。这就是说，即使有多个<literal>factorial()</literal>在同时执行，它们都会使用同一个全局变量<literal>$n</literal>。这对函数的行为有什么影响呢？
+			</para>
+
+			<para>
+				来看看调用<literal>factorial(1)</literal>时的情况。一开始，<literal>$n</literal>设置成1，这样第二行的判断会失败，于是函数递归调用<literal>factorial(0)</literal>。而<literal>factorial(1)</literal>则会一直等到新调用的函数执行完毕之后，才会继续执行。进入<literal>factorial(0)</literal>之后，<literal>$n</literal>被设置为0。这次，第二行的判断为真，于是函数立即返回1。
+			</para>
+
+			<para>
+				<literal>factorial(0)</literal>的结果为1，这样<literal>factorial(1)</literal>可以继续执行了。<literal>factorial(1)</literal>使用刚才的结果1，将它乘以<literal>$n</literal>，并返回结果。但刚才<literal>factorial(0)</literal>已经把<literal>$n</literal>设置成了0，所以结果为1·0 = 0。最终我们得到了<literal>factorial(1)</literal>的错误结果——0。正确的值应该是1。
+			</para>
+
+			<para>
+				类似地，<literal>factorial(2)</literal>应该返回2，但却返回0；<literal>factorial(3)</literal>应该返回6，但却返回0；以此类推。
+			</para>
+
+			<para>
+				为了确保正确执行，每个<literal>factorial()</literal>的调用都要有自己的<literal>$n</literal>的副本，避免被其他的调用影响，而这正是<literal>my</literal>的作用。每次调用<literal>factorial()</literal>，都会为该次调用生成一个新的变量，作为<literal>$n</literal>使用。
+			</para>
+
+			<para>
+				其他所有支持递归函数的语言都有类似于Perl的<literal>my</literal>变量的某种机制，用于在每次函数调用时创建新的变量。例如C语言中，在函数内部创建的变量默认就是这样，除非用特别的方法定义。（在C语言中，这种变量的分配和释放是自动完成的，因此被称为<emphasis>自动</emphasis>变量。使用全局变量，或者不会在每次函数调用时重新分配的存储方式，会导致函数无法递归调用，这种函数称为<emphasis>不可重入的</emphasis>（<foreignphrase>non-reentrant</foreignphrase>）。在Fortran之类的语言风行的时代（Fortran直到1990年才支持递归），不可重入函数十分常见，但当支持私有变量的语言（如C语言）流行之后，这种函数就比较少见了。
+			</para>
+		</sect2>
+
+	</sect1>
+
+	<sect1 id="sect1-3">
+		<title>汉诺塔</title>
+
+		<para>
+			上面两个例子实际上都用不着递归，只需简单的循环就可以解决。
+		</para>
+
+		<para>
+			这种递归到非递归的转换总是可行的，因为归根结底，计算机的机器语言并不支持递归，所以从某种意义上说，递归并非不可替代的。上述阶乘函数很容易转换，但并不是所有函数都这么容易。下面这个例子是由Edouard Lucas在1883年第一次提出的一个游戏，名为汉诺塔（<foreignphrase>Tower of Hanoi</foreignphrase>）。
+		</para>
+
+		<para>
+			该游戏有三根柱子：A、B、C。在A柱上有一摞按大小排列的盘子“塔”，最大的盘子在最底部，最小的盘子在最顶部（参见<xref linkend="fg1-1"/>）。
+		</para>
+		<figure id="fg1-1">
+			<title>汉诺塔的初始状态</title>
+			<graphic fileref="img/fg1-1.png"/>
+		</figure>
+
+		<para>
+			游戏的目的是要将所有盘子从A移动到C，但要服从以下限制：每次只能移动一个盘子，任何盘子不能放在比自己小的盘子上。至于盘子的总数，不同的出题者会给出不同的值，但传统上是64个盘子。下面我们来试着解决该问题的一般形式，即<inlineequation><textobject><phrase>n</phrase></textobject></inlineequation>个盘子的情况。
+		</para>
+
+		<para>
+			考虑<inlineequation><textobject><phrase>n</phrase></textobject></inlineequation>个盘子中最大的那个盘子，它位于最底部。最初，最大的盘子位于A柱，我们要将它移动到C柱。如果A柱上还有其他盘子，那么必然在最大的盘子的上放，所以没办法直接移动最大的盘子。如果C柱上有其他盘子，就无法将最大的盘子移动到C柱，否则它就会压在其他的小盘子之上了。所以，如果要将最大的盘子从A移动到C，那么其他所有盘子必须都被移动到B上，并按照从小到大的顺序排列（参见<xref linkend="fg1-2"/>）。
+		</para>
+		<figure id="fg1-2">
+			<title>汉诺塔的一种中间状态</title>
+			<graphic fileref="img/fg1-2.png"/>
+		</figure>
+
+		<para>
+			因此，要解决这个问题，需要先完成一个子问题：把除了最大的盘子之外的所有盘子从A移动到B。只有这样，才能将最大的盘子从A移动到C。最后，就可以将余下的盘子从B移动到C，这是另一个子问题。
+		</para>
+
+		<para>
+			幸运的是，在移动较小的盘子时，可以完全忽略最大的盘子，不管它在哪儿，都不会造成任何影响。这就意味着在移动较小的盘子时可以使用同样的逻辑。较小的一摞盘子的“塔”的底部是相对较大的盘子；只需将“塔”中的其他盘子移走，再将底部的盘子移动到正确的位置，最后将其余小盘子移动到它上边即可。那么，其余那些小盘子怎样移动呢？照旧。
+		</para>
+
+		<para>
+			最后需要考虑的问题就是怎样将只有一个盘子的一“摞”移动，其实它就是最小的盘子。这个问题已经微不足道，只需将最小的盘子放在需要的地方即可。我们知道它上面不会有任何东西（否则就违反规则了），还知道可以随时把它移动到任何地方，因为它是最小的，所以不可能把它放在比它还小的盘子上。
+		</para>
+
+		<para>
+			移动最初那一摞盘子塔的策略如下：
+		</para>
+
+		<para>
+			要将<inlineequation><textobject><phrase>n</phrase></textobject></inlineequation>个盘子从起点柱移动到终点柱，应当：
+			<orderedlist>
+				<listitem>如果“塔”中只有一个盘子，就移动它。否则：</listitem>
+				<listitem>再次使用这种方法，把除了第<inlineequation><textobject><phrase>n</phrase></textobject></inlineequation>个盘子（最大的盘子）之外的所有盘子从起点柱移动到第三根柱子。</listitem>
+				<listitem>将第<inlineequation><textobject><phrase>n</phrase></textobject></inlineequation>个盘子（最大的盘子）从起点柱移动到终点柱。</listitem>
+				<listitem>再次使用该方法，将其余所有盘子从第三根柱子移动到终点柱。</listitem>
+			</orderedlist>
+		</para>
+
+		<para>
+			这个策略可以轻而易举地写成程序：
+		</para>
+
+		<programlisting id="hanoi"><![CDATA[
+# hanoi(N, start, end, extra)
+# 解决含有N个盘子的汉诺塔问题，其中最大的盘子为#N。
+# 要将整个塔从'start'移动到'end'，使用'extra'
+# 作为存放盘子的临时空间
+sub hanoi {
+  my ($n, $start, $end, $extra) = @_;
+  if ($n == 1) {
+    print "Move disk #1 from $start to $end.\n"; # 第1步
+  } else {
+    hanoi($n-1, $start, $extra, $end); # 第2步
+    print "Move disk #$n from $start to $end.\n"; # 第3步
+    hanoi($n-1, $extra, $end, $start); # 第4步
+  }
+}
+			]]></programlisting>
+
+		<para>
+			该函数会打印出一系列的指令，表明如何移动塔。例如，要获得移动三个盘子的指令，只需这样调用：
+		</para>
+
+		<programlisting><![CDATA[
+hanoi(3, 'A', 'C', 'B');
+			]]></programlisting>
+
+		<para>
+			输出结果为：
+		</para>
+
+		<programlisting><![CDATA[
+Move disk #1 from A to C.
+Move disk #2 from A to B.
+Move disk #1 from C to B.
+Move disk #3 from A to C.
+Move disk #1 from B to A.
+Move disk #2 from B to C.
+Move disk #1 from A to C.
+			]]></programlisting>
+
+		<para>
+			如果想把移动盘子用图形来显示，而不是输出一行说明文字，可以用更巧妙的语句代替<literal>print</literal>。不过，只需稍稍动点脑筋，就可以把软件做得更灵活些——通过参数来指定输出的行为。不再硬性书写<literal>print</literal>，而是让<literal>hanoi()</literal>接收一个函数作为参数，每次<literal>hanoi()</literal>想要移动盘子时就调用它。这个函数可以输出说明文字，可以更新图形显示，或者做其他动作。传给该函数的参数为盘子的序号、移动的原点和移动的目标。代码几乎完全相同：
+		</para>
+
+		<programlisting><![CDATA[
+sub hanoi {
+  my ($n, $start, $end, $extra, $move_disk) = @_;
+  if ($n == 1) {
+    $move_disk->(1, $start, $end);
+  } else {
+    hanoi($n-1, $start, $extra, $end, $move_disk);
+    $move_disk->($n, $start, $end);
+    hanoi($n-1, $extra, $end, $start, $move_disk);
+  }
+}
+			]]></programlisting>
+
+		<para>
+			要想获得与原版同样的结果，可以这样调用<literal>hanoi()</literal>：
+		</para>
+
+		<programlisting><![CDATA[
+sub print_instruction {
+my ($disk, $start, $end) = @_;
+	print "Move disk #$disk from $start to $end.\n";
+}
+
+hanoi(3, 'A', 'C', 'B', \&print_instruction);
+			]]></programlisting>
+
+		<para>
+			<literal>\&amp;print_instruction</literal>这种写法可以生成一个<emphasis>代码引用</emphasis>（<foreignphrase>code reference</foreignphrase>），它是代表函数的一个标量。与其他类型的标量一样，可以将代码引用保存在一个标量变量中，或作为参数传递，也可以用该引用来调用它所代表的函数。调用方法为：
+		</para>
+
+		<programlisting><![CDATA[
+$code_reference->(arguments...);
+			]]></programlisting>
+
+		<para>
+			这样即可用指定的参数调用函数。
+			<footnote>
+				<para>
+					Perl 5.004开始才引入这种写法。5.003或更早版本中，必须使用另一种比较难看的写法：<literal>&amp;{$code_reference}(arguments...);</literal>。如果<literal>$code_reference</literal>是简单变量（如本例），那么花括号可以省略。
+				</para>
+			</footnote>
+			代码引用通常称为<foreignphrase>coderefs</foreignphrase>。
+		</para>
+
+		<para>
+			传给<literal>hanoi()</literal>的那个代码引用称为<emphasis>回调函数</emphasis>（<foreignphrase>callback</foreignphrase>，因为调用者提供给<literal>hanoi()</literal>的这个函数，是在<literal>hanoi()</literal>需要的时候“回来调用”的。有时也把<literal>hanoi()</literal>函数的这个<literal>$move_disk</literal>参数称为<emphasis>钩子</emphasis>（<foreignphrase>hook</foreignphrase>），因为通过它可以方便地挂接其他功能。
+		</para>
+
+		<para>
+			有了通用的<literal>hanoi()</literal>函数，我们可以传进一个<literal>$move_disk</literal>函数，跟踪盘子的位置，并检查移动是否合法，就可以对该算法进行测试：
+		</para>
+
+		<programlisting id="check-move"><![CDATA[
+@position = ('', ('A') x 3); # Disks are all initially on peg A
+
+sub check_move {
+  my $i;
+  my ($disk, $start, $end) = @_;
+			]]></programlisting>
+
+		<para>
+			<literal>check_move()</literal>函数维护一个数组<literal>@position</literal>，用于记录每个盘子的当前位置。最初，所有盘子都位于A柱。这里假设只有三个盘子，所以设置<literal>$position[1]</literal>、<literal>$position[2]</literal>和<literal>$position[3]</literal>为<literal>"A"</literal>。由于没有零号盘子，所以<literal>$position[0]</literal>永远不会用到。每次<literal>hanoi()</literal>函数想要移动盘子时，就会调用<literal>check_move()</literal>。
+		</para>
+
+		<programlisting><![CDATA[
+if ($disk<1|| $disk > $#position) {
+  die "Bad disk number $disk. Should be 1..$#position.\n";
+}
+			]]></programlisting>
+
+		<para>
+			这个检查并不重要，只是为了确保<literal>hanoi()</literal>没有移动不存在的盘子。
+		</para>
+
+		<programlisting><![CDATA[
+unless ($position[$disk] eq $start) {
+	die "Tried to move disk $disk from $start, but it is on peg
+	$position[$disk].\n";
+}
+			]]></programlisting>
+
+		<para>
+			这段代码检查<literal>hanoi()</literal>在移动盘子时，盘子的源位置是否与实际相符。如果源位置与<literal>check_move()</literal>记录的盘子当前位置不符，该函数就会产生错误。
+		</para>
+
+		<programlisting><![CDATA[
+for $i (1 .. $disk-1) {
+  if ($position[$i] eq $start) {
+    die "Can't move disk $disk from $start because $i is on top of it.\n";
+  } elsif ($position[$i] eq $end) {
+    die "Can't move disk $disk to $end because $i is already there.\n";
+  }
+}
+			]]></programlisting>
+
+		<para>
+			这段检查代码最有意思。函数依次检查所有比<literal>hanoi()</literal>想要移动的那个盘子小的盘子，确保移动过程中没有小盘子的阻碍。第一个<literal>if</literal>判断确保所有小盘子都不在<literal>hanoi()</literal>要移动的盘子之上， 而第二个确保<literal>hanoi()</literal>不会把盘子放在小盘子上。
+		</para>
+
+		<programlisting><![CDATA[
+  print "Moving disk $disk from $start to $end.\n";
+  $position[$disk] = $end;
+}
+			]]></programlisting>
+
+		<para>
+			最后，函数判断移动中没有任何错误，就输出一条信息，并调整<literal>@position</literal>数组，以反映盘子的新位置。
+		</para>
+
+		<para>
+			运行以下代码：
+		</para>
+		<programlisting><![CDATA[
+hanoi(3, 'A', 'C', 'B', \&check_move);
+			]]></programlisting>
+
+		<para>
+			就会得到跟前面相同的结果，没有任何错误，说明<literal>hanoi()</literal>所做的动作都是正确的。
+		</para>
+
+		<para>
+			这个例子演示了一项十分有价值的技术，在今后的学习中我们会反复遇到——将函数的某一部分变成参数，去调用其他函数，而不是将动作直接写出来，可以让函数更加灵活。如果想让函数执行的动作稍有不同，如进行自动自检等，就会知道这种灵活性的好处。无需为函数书写一大堆乱七八糟的测试代码，只要把测试部分从主算法中分离出来即可。主算法尽量保持简洁，如果需要测试，只需给它传递不同的代码引用参数，即可启用或禁止运行时的自检。
+		</para>
+
+	</sect1>
+
+	<sect1 id="sect1-4">
+		<title>层次数据</title>
+
+		<para>
+			前面介绍的几个例子让我们初步了解了递归过程的概貌，但它们遗漏了重哟啊的一点。我曾在<link linkend="sect1-3">汉诺塔</link>中说过，如果问题能转化为更简单的同类问题，那么它最适合使用递归来解决。不过，这种问题有时并不明显。
+		</para>
+
+		<para>
+			绝大多数递归函数都是用来处理递归的数据结构的。例如，列表、树、堆，它们都由更简单的同类数据构成，这些都是递归数据结构。广为人知的例子恐怕就是文件系统的目录结构了。每个文件都是下面两种情况之一：
+		</para>
+
+		<itemizedlist>
+			<listitem>包含数据的普通文件</listitem>
+			<listitem>包含一系列文件的目录</listitem>
+		</itemizedlist>
+
+		<para>
+			文件可能是个包含许多文件的目录，这些文件中的一部分也有可能是目录，它们还会包含更多的文件，以此类推。处理这种数据结构的最有效的方式就是使用递归过程。理论上，调用这种过程就是处理一个文件。文件可能是普通文件，也可能是目录。如果是目录，过程就会递归调用自身，来处理该目录所拥有的子文件。如果子文件还是目录，过程就会再次递归调用。
+		</para>
+
+		<para>
+			下面这个示例函数，参数为目录名称，可以计算指定目录中包含的所有文件的总大小，包括子目录以及子目录的子目录，等等：
+		</para>
+
+		<programlisting id="total-size-broken"><![CDATA[
+sub total_size {
+  my ($top) = @_;
+  my $total = -s $top;
+			]]></programlisting>
+
+		<para>
+			第一次调用该函数时，使用的参数<literal>$top</literal>是想要统计的文件或目录的名称。函数首先使用Perl的<literal>-s</literal>操作符获得文件或目录本身的大小。该操作符获取文件大小（以字节为单位）。如果文件是个目录，它返回目录本身所占的磁盘空间，而不包括目录中包含的文件——要知道，目录实质上是个文件列表，列表本身也要占据一些空间。如果顶层文件确实是个目录，函数应当将它包含的文件的大小追加到<literal>$total</literal>中保存的总大小中。
+		</para>
+
+		<programlisting><![CDATA[
+  return $total if -f $top;
+  unless (opendir DIR, $top) {
+    warn "Couldn’t open directory $top: $!; skipping.\n";
+    return $total;
+  }
+			]]></programlisting>
+
+		<para>
+			<literal>-f</literal>操作符检查参数是否为普通文件，如果是，函数就可以立即返回总大小。否则，就假设顶层文件确实是目录，并尝试用<literal>opendir()</literal>打开。如果目录打不开，函数就产生一条警告信息，并返回当前的总大小，它等于目录本身的大小，不包括目录中的文件。
+		</para>
+
+		<programlisting><![CDATA[
+  my $file;
+  while ($file = readdir DIR) {
+    next if $file eq '.' || $file eq '..';
+    $total += total_size("$top/$file");
+  }
+			]]></programlisting>
+
+		<para>
+			下一段代码<literal>while</literal>循环是整个函数的核心。它每次从目录中读取一个文件名，然后分别递归调用自己，并将结果添加到当前的总大小中。
+		</para>
+
+		<programlisting><![CDATA[
+  closedir DIR;
+  return $total;
+}
+			]]></programlisting>
+
+		<para>
+			在循环结尾，函数关闭目录并返回总大小。
+		</para>
+
+		<para>
+			循环中，函数跳过了<literal>.</literal>和<literal>..</literal>这两个名称，它们分别代表当前目录和父目录。如果不这样，函数就会去计算<literal>././././././fred</literal>和<literal>dir/../dir/../dir/../dir/fred</literal>这种文件的总大小，而永远无法结束。
+		</para>
+
+		<para>
+			不过，这个函数有个大缺陷。实际上它根本无法运行。问题在于，目录句柄（<literal>DIR</literal>）是全局的，所以函数是不可重入的。该函数执行失败的原因与那个缺少<literal>my</literal>的<literal>factorial()</literal>一样。第一次调用毫无问题，但如果<literal>total_size()</literal>递归调用自己，那么第二次调用就会打开同一个目录句柄<literal>DIR</literal>。最终，第二个调用会到达目录末尾，关闭<literal>DIR</literal>并返回。之后，第一个调用会继续执行，发现<literal>DIR</literal>已经关闭了，就会退出<literal>while</literal>循环，实际上并没有从顶层目录中读出所有文件名。如果第二个调用也会递归调用自己，那么也会发生同样的问题。
+		</para>
+
+		<para>
+			其结果就是，这个函数只能遍历目录树的第一个枝。如果目录的层次层次结构像这样的话：
+		</para>
+
+		<graphic fileref="img/dir-hierarchy.png"/>
+
+		<para>
+			那么函数将沿着<inlineequation><textobject><phrase>top-a-d</phrase></textobject></inlineequation>路径检查文件<inlineequation><textobject><phrase>j</phrase></textobject></inlineequation>和<inlineequation><textobject><phrase>k</phrase></textobject></inlineequation>，并报告<inlineequation><textobject><phrase>top + a + d + j + k</phrase></textobject></inlineequation>的总大小，而忽略了<inlineequation><textobject><phrase>b, c, e, f, g, h, i, l</phrase></textobject></inlineequation>。
+		</para>
+
+		<para>
+			要改正这个问题，必须把目录句柄<literal>DIR</literal>变成<literal>$top</literal>和<literal>$total</literal>那样的私有变量。因此，不应当使用<literal>opendir DIR, $top</literal>，而是要写成<literal>opendir $dir, $top</literal>，其中<literal>$dir</literal>是个私有变量。当<literal>opendir</literal>的第一个参数是个未定义的变量时，<literal>opendir</literal>就会创建新的匿名句柄，并保存到<literal>$dir</literal>中。
+			<footnote>
+				<para>
+					该功能是在Perl 5.6.0中引入的。Perl早期版本的用户必须通过<literal>IO::Handle</literal>模块明确地创建目录句柄：<literal>my $dir = IO::Handle->new; opendir $dir, $top;</literal>。
+				</para>
+			</footnote>
+		</para>
+
+		<para>
+			因此，代码不能写成这样：
+		</para>
+
+		<programlisting><![CDATA[
+  opendir DIR, $somedir;
+  print (readdir DIR);
+  closedir DIR;
+			]]></programlisting>
+
+		<para>
+			而是要写成这样，即可获得同样的结果：
+		</para>
+
+		<programlisting><![CDATA[
+  my $dir;
+  opendir $dir, $somedir;
+  print (readdir $dir);
+  closedir $dir;
+			]]></programlisting>
+
+		<para>
+			两者之间最大的区别就是，<literal>DIR</literal>是全局目录句柄，可以被程序的任何部分读取或关闭；而<literal>$dir</literal>中的目录句柄是私有的，只有创建它的函数、被明确地传递了<literal>$dir</literal>的函数才能读取或关闭它。
+		</para>
+		<para>
+			下面使用这种技术重写<literal>total_size()</literal>，使其正常运行：
+		</para>
+
+		<programlisting id="total-size"><![CDATA[
+sub total_size { 
+  my ($top) = @_;
+  my $total = -s $top;
+  my $DIR;
+
+  return $total if -f $top;
+  unless (opendir $DIR, $top) {
+    warn "Couldn’t open directory $top: $!; skipping.\n";
+    return $total;
+  }
+
+  my $file;
+  while ($file = readdir $DIR) {
+    next if $file eq '.' || $file eq '..';
+    $total += total_size("$top/$file");
+  }
+
+  closedir $DIR;
+  return $total;
+}
+			]]></programlisting>
+
+		<para>
+			实际上，这里无需调用<literal>closedir</literal>，因为用这种方式创建的目录句柄，在离开变量作用域时会自动关闭。在<literal>total_size()</literal>返回时，包括<literal>$dir</literal>在内的私有变量都会被销毁，而<literal>$dir</literal>中正好包含了目录句柄对象的唯一的引用。于是，Perl就会销毁目录句柄对象，在此过程中关闭目录句柄。以后我们不再明确写出<literal>closedir</literal>。
+		</para>
+
+		<para>
+			这个函数还有些问题：它还不能正确处理符号链接；如果一个文件具有两个文件名并且位于同一目录下，它就会被计算两次。此外，在Unix系统上，文件在磁盘上占用的实际空间通常与<literal>-s</literal>的结果并不一致，因为磁盘空间每次按照1024字节的块来分配。但这个函数已经很有用了，还可以在其他任务中使用它。如果有必要改正这些问题，那么只需修改该函数即可，而无需去50个应用程序中修改50个稍有不同的目录遍历函数中的同样问题。
+		</para>
+	</sect1>
+
+
+	<sect1 id="sect1-5">
+		<title>应用程序和目录遍历的各种形式</title>
+		<para>
+			写一个遍历目录树的函数非常实用，可以将它用在各种目的上。例如，如果要写个类似于Unix的<literal>ls -R</literal>命令那样的递归文件一览查看程序，就需要遍历目录树。可以让函数像Unix的<literal>du</literal>命令那样，显示出每个子目录以及其下的所有文件的总大小。还可以让函数去查找损坏的符号链接（<foreignphrase>dangling symbolic link</foreignphrase>），即指向不存在的文件的链接。Perl新闻组和IRC频道中经常有人问到的问题，就是如何遍历目录树并修改每个文件的文件名，或对每个文件执行某种操作。
+		</para>
+
+		<para>
+			我们可以写出许多大同小异的函数去处理这些任务。但每个函数的核心部分都是递归目录遍历器，所以应当将它抽象出来，作为工具来使用。如果能将遍历器分离出来，就可以将它放到函数库中，这样其他需要目录遍历器的人就可以直接使用了。
+		</para>
+
+		<para>
+			上面这段话中有个重要的观念转变。从现在开始，本书其余的绝大部分中，我们将采取一种你可能从未见过的观点：我们不再关注于开发完整的程序，而是要写出对<emphasis>其他程序员</emphasis>有用的代码，使他能在别的程序中重用。我们不再书写程序，而是书写被其他程序使用的函数库或模块。
+		</para>
+
+		<para>
+			我们可以选择的方向之一，就是演示如何为<literal>total_size()</literal>函数撰写一个<emphasis>用户界面</emphasis>，它会提示用户输入目录名，或者从命令行或图形控件中读取目录名，然后以某种方式显示结果。但我们不会这样做。添加提示用户输入目录名或者读取命令行参数的代码并不困难。本书的其余部分中，我们不会涉及到用户界面，而是要讨论<literal>程序员接口</literal>。本书其余部分讨论的“用户”并不是普通用户，而是其他希望借助我们的代码去完成他们自己的代码的程序员。因此，我们不讨论如何让整个程序对最终用户简单易用，而是讨论如何让其他程序员能够简单、方便地将函数和函数库应用到他们自己的程序中。
+		</para>
+
+		<para>
+			这样做有两点好处。其一，如果函数设计良好、易于重用，那么我们自己就能重复利用它来节约时间、减少麻烦。无需再反复书写相似的代码，只要将熟悉的目录遍历函数嵌入到每个需要的它的程序中即可。在一个程序中改善目录遍历函数，就能自动地改善其他程序的功能。日久天长，我们就会开发出一个工具包，包含了诸多实用函数和函数库，能大大提高生产性，也能增加编程的乐趣。
+		</para>
+
+		<para>
+			但更重要的是，如果函数设计良好、易于重用，其他程序员就能使用它们，并和我们一样从中得益。况且，有益于他人，也是人生的首要目的。
+			<footnote>
+				<para>
+					有人觉得这完全没有说服力，但我想说的是，如果我们能有益于别人，别人就会尊敬、爱戴我们，也许会给我们带来更多好处。
+				</para>
+			</footnote>
+		</para>
+
+		<para>
+			带着这个观点，我们继续讨论。我们已写出了一个函数<literal>total_size()</literal>，它有个实用的功能：递归遍历目录树。如果能干净地将代码中的目录遍历部分从总大小计算部分中分离出来，也许就能在许多其他项目中，将这个目录遍历功能重用于其他的目的。如何分离这两个功能呢？
+		</para>
+
+		<para>
+			正如<link linkend="sect1-3">汉诺塔</link>程序，此处的关键是给函数传递一个额外的参数。参数本身是个函数，告诉<literal>total_size()</literal>应该做什么。代码如下所示：
+		</para>
+
+		<programlisting id="dir-walk-simple"><![CDATA[
+sub dir_walk {
+  my ($top, $code) = @_;
+  my $DIR;
+
+  $code->($top);
+
+  if (-d $top) {
+    my $file;
+    unless (opendir $DIR, $top) {
+      warn "Couldn’t open directory $top: $!; skipping.\n";
+      return;
+    }
+    while ($file = readdir $DIR) {
+      next if $file eq '.' || $file eq '..';
+      dir_walk("$top/$file", $code);
+    }
+  }
+}
+			]]></programlisting>
+
+		<para>
+			这个函数我改名为<literal>dir_walk()</literal>，来表述它的通用性。它带有两个参数。第一个<literal>$top</literal>跟以前一样，是搜索开始处的文件或目录。第二个<literal>$code</literal>是新添加的参数，是个代码引用，告诉<literal>dir_walk</literal>我们想要针对目录树中发现的各个文件或目录做什么。每次<literal>dir_walk()</literal>发现一个新文件或目录时，都会调用这段代码，并将文件名作为参数传递。
+		</para>
+
+		<para>
+			这样，如果其他程序员问到，“怎样对目录树中的每个文件进行X操作？”我们就可以回答，“调用<literal>dir_walk()</literal>函数，把X放到函数里然后将函数引用传给它就行了。”此时<literal>$code</literal>参数是个回调函数。
+		</para>
+
+		<para>
+			例如，要写一个显示当前目录下所有文件和目录的程序，可以这样用：
+		</para>
+
+		<programlisting><![CDATA[
+sub print_dir {
+  print $_[0], "\n";
+}
+
+dir_walk('.', \&print_dir );
+			]]></programlisting>
+
+		<para>
+			它的输出结果是：
+		</para>
+
+		<programlisting><![CDATA[
+.
+./a
+./a/a1
+./a/a2
+./b
+./b/b1
+./c
+./c/c1
+./c/c2
+./c/c3
+./c/d
+./c/d/d1
+./c/d/d2
+			]]></programlisting>
+
+		<para>
+			（当前目录包含三个子目录，名为<literal>a</literal>、<literal>b</literal>和<literal>c</literal>。子目录<literal>c</literal>又包含名为<literal>d</literal>的子目录。）
+		</para>
+
+		<para>
+			<literal>print_dir</literal>这个函数太简单了，给它起个名字都会觉得是浪费时间。如果能不起名字，直接写出函数来，那就更方便了，就像这个表达式中，
+		</para>
+
+		<programlisting><![CDATA[
+$weekly_pay = 40 * $hourly_pay;
+			]]></programlisting>
+
+		<para>
+			我们无需将40保存在变量中一样。Perl确实有这种语法：
+		</para>
+
+		<programlisting><![CDATA[
+dir_walk('.', sub { print $_[0], "\n" } );
+			]]></programlisting>
+
+		<para>
+			<literal>sub { ... }</literal>引入了一个<emphasis>匿名函数</emphasis>，就是没有名字的函数。<literal>sub { ... }</literal>结构的值是个函数引用，可以用来调用函数。可以将函数引用保存在标量变量中，也可以像其他引用一样，作为参数传给函数。这一行与前面带有<literal>print_dir</literal>函数的冗长代码功能相同。
+		</para>
+
+		<para>
+			如果想让函数显示出文件大小和文件名，只需对函数引用参数做一点小小的修改：
+		</para>
+
+		<programlisting><![CDATA[
+dir_walk('.', sub { printf "%6d %s\n", -s $_[0], $_[0] } );
+
+  4096 .
+  4096 ./a
+  261 ./a/a1
+  171 ./a/a2
+  4096 ./b
+  348 ./b/b1
+  4096 ./c
+  658 ./c/c1
+  479 ./c/c2
+  889 ./c/c3
+  4096 ./c/d
+  568 ./c/d/d1
+  889 ./c/d/d2
+			]]></programlisting>
+
+		<para>
+			想让函数查找损坏的符号链接，也十分容易：
+		</para>
+
+		<programlisting><![CDATA[
+dir_walk('.', sub { print $_[0], "\n" if -l $_[0] && ! -e $_[0] });
+			]]></programlisting>
+
+		<para>
+			<literal>-l</literal>测试当前文件是是否为符号链接，<literal>-e</literal>测试链接指向的文件是否存在。
+		</para>
+
+		<para>
+			不过，这与我的希望还有一点差距。没有简单的方法可以让<literal>dir_walk()</literal>累计所有发现的文件的大小。<literal>$code</literal>只对每个文件调用一次，所以永远没有机会去累计。如果累计很简单，可以在回调函数之外定义一个变量来实现：
+		</para>
+
+		<programlisting><![CDATA[
+my $TOTAL = 0;
+dir_walk('.', sub { $TOTAL += -s $_[0] });
+print "Total size is $TOTAL.\n";
+			]]></programlisting>
+
+		<para>
+			这个方法有两个缺点。首先，回调函数依赖于<literal>$TOTAL</literal>变量的作用域，必须是使用<literal>$TOTAL</literal>的代码。通常，这种情况下这并不是问题，但如果回调函数是其他函数库中的复杂函数，实现起来就相当有难度了。我们将在2.1节[TODO]中讨论该问题的一种解决方案。
+		</para>
+
+		<para>
+			另一个缺点是，只有累计极其简单时（如本例），这种方法才有效。假如不是计算总大小，而是要建立文件名和文件大小的散列结构，如下：
+		</para>
+
+		<programlisting><![CDATA[
+{
+  'a' => {
+           'a1' => '261',
+           'a2' => '171'
+         },
+  'b' => {
+           'b1' => '348'
+         },
+  'c' => {
+           'c1' => '658',
+           'c2' => '479',
+           'c3' => '889',
+           'd' => {
+                    'd1' => '568',
+                    'd2' => '889'
+                  }
+         }
+}
+			]]></programlisting>
+
+		<para>
+			这里，散列的键是文件名和目录名。文件名的值是文件大小，目录的值是另一个散列，表示目录的内容。此时，怎样用简单的<literal>$TOTAL</literal>累计的回调函数来产生如此复杂的结构，恐怕就不那么明显了。
+		</para>
+
+		<para>
+			这个<literal>dir_walk</literal>函数还不够通用。它还应当根据文件进行一些计算，如计算总大小，并将计算结果返回给调用者。调用者可以是主程序，也可以是另一个<literal>dir_walk</literal>的调用，这样另一个<literal>dir_walk</literal>就能在<emphasis>它自己</emphasis>的计算中使用得到的值。
+		</para>
+
+		<para>
+			怎样让<literal>dir_walk()</literal>知道如何计算？<literal>total_size()</literal>中的计算是直接写在函数中的。我们希望<literal>dir_walk()</literal>能更加通用、更加实用。
+		</para>
+
+		<para>
+			我们只需要提供两个函数：一个用于普通文件，一个用于目录。<literal>dir_walk()</literal>在需要计算普通文件时就调用普通文件的函数，需要计算目录时就调用目录的函数。<literal>dir_walk()</literal>自己无需知道计算的任何细节，它只要知道，将实际计算工作交给这两个函数就够了。
+		</para>
+
+		<para>
+			这两个函数都接受文件名参数，并针对参数指定的文件，计算它们感兴趣的值（如文件大小）。由于目录就是一系列的文件，所以处理目录的函数还应当接收目录中的文件所计算出的一系列的值，使用这些值，就可以计算整个目录的值。处理目录的函数知道如何将这些值累计起来，从而算出整个目录的值。
+		</para>
+
+		<para>
+			作了这些改变之后，就可以进行<literal>total_size</literal>的操作了。处理普通文件的函数只需简单地返回文件的大小即可。处理目录的函数能取得目录名称，和其中包含的每个文件的大小，只需将它们全部相加，再返回结果。通用的函数框架如下所示：
+		</para>
+
+		<programlisting id="dir-walk-cb"><![CDATA[
+sub dir_walk {
+  my ($top, $filefunc, $dirfunc) = @_;
+  my $DIR;
+
+  if (-d $top) {
+    my $file;
+    unless (opendir $DIR, $top) {
+      warn "Couldn't open directory $code: $!; skipping.\n";
+      return;
+    }
+
+    my @results;
+    while ($file = readdir $DIR) {
+      next if $file eq '.' || $file eq '..';
+      push @results, dir_walk("$top/$file", $filefunc, $dirfunc);
+    }
+    return $dirfunc->($top, @results);
+  } else {
+    return $filefunc->($top);
+  }
+}
+			]]></programlisting>
+
+		<para>
+			计算当前目录的总大小，可以这样使用：
+		</para>
+
+		<programlisting><![CDATA[
+sub file_size { -s $_[0] }
+
+sub dir_size {
+  my $dir = shift;
+  my $total = -s $dir;
+  my $n;
+  for $n (@_) { $total += $n }
+  return $total;
+}
+
+$total_size = dir_walk('.', \&file_size, \&dir_size);
+			]]></programlisting>
+
+		<para>
+			<literal>file_size()</literal>函数描述了给定文件名后，如何计算普通文件的大小；<literal>dir_size()</literal>函数描述了，在给定目录名和目录中内容的大小后，如何计算目录的大小。
+		</para>
+
+		<para>
+			如果希望像<literal>du</literal>那样，显示出每个子目录的大小，只需添加一行：
+		</para>
+
+		<programlisting><![CDATA[
+sub file_size { -s $_[0] }
+
+sub dir_size {
+  my $dir = shift;
+  my $total = -s $dir;
+  my $n;
+  for $n (@_) { $total += $n }
+  printf "%6d %s\n", $total, $dir;
+  return $total;
+}
+
+$total_size = dir_walk('.', \&file_size, \&dir_size);
+			]]></programlisting>
+
+		<para>
+			它的输出结果如下：
+		</para>
+
+		<programlisting><![CDATA[
+ 4528 ./a
+ 4444 ./b
+ 5553 ./c/d
+11675 ./c
+24743 .
+			]]></programlisting>
+
+		<para>
+			想让函数生成前面提到的散列结构，可以把下面这对回调函数传给它：
+		</para>
+
+		<programlisting id="dir-walk-sizehash"><![CDATA[
+sub file {
+  my $file = shift;
+  [short($file), -s $file];
+}
+
+sub short {
+  my $path = shift;
+  $path =~ s{.*/}{};
+  $path;
+}
+			]]></programlisting>
+
+		<para>
+			处理文件的回调函数返回一个数组，包含简略的文件名称（即不包含路径）和文件大小。与前面类似，累计是在处理目录的回调函数中进行的：
+		</para>
+
+		<programlisting><![CDATA[
+sub dir {
+  my ($dir, @subdirs) = @_;
+  my %new_hash;
+  for (@subdirs) {
+    my ($subdir_name, $subdir_structure) = @$_;
+    $new_hash{$subdir_name} = $subdir_structure;
+  }
+  return [short($dir), \%new_hash];
+}
+			]]></programlisting>
+
+		<para>
+			目录回调函数获取当前目录的名称，还有对应于子文件和子目录的一个名称-值对列表。然后将这些名称-值对合并到散列中，并返回一对新的值，表示当前目录的简略名称，以及刚刚为当前目录创建的散列。
+		</para>
+
+		<para>
+			前面写过的较为简单的函数依然很简单。下面是递归文件一览查看程序。只需给文件和目录提供同样的函数：
+		</para>
+
+		<programlisting><![CDATA[
+sub print_filename { print $_[0], "\n" }
+dir_walk('.', \&print_filename, \&print_filename);
+			]]></programlisting>
+
+		<para>
+			下面是损坏符号链接检测程序：
+		</para>
+
+		<programlisting><![CDATA[
+sub dangles {
+	my $file = shift;
+	print "$file\n" if -l $file && ! -e $file;
+}
+dir_walk('.', \&dangles, sub {});
+			]]></programlisting>
+
+		<para>
+			我们知道，目录不可能是损坏的链接，所以目录函数是个<emphasis>空函数</emphasis>，不做任何动作而直接返回。如果有必要，可以避免这种奇怪的函数，并减少调用该函数造成的额外开销，如下：
+		</para>
+
+		<programlisting id="dir-walk-cb-def"><![CDATA[
+sub dir_walk {
+  my ($top, $filefunc, $dirfunc) = @_;
+  my $DIR;
+  if (-d $top) {
+    my $file;
+    unless (opendir $DIR, $top) {
+      warn "Couldn’t open directory $top: $!; skipping.\n";
+      return;
+    }
+
+    my @results;
+    while ($file = readdir $DIR) {
+      next if $file eq '.' || $file eq '..';
+      push@results,dir_walk("$top/$file", $filefunc, $dirfunc);
+    }
+
+    return $dirfunc ? $dirfunc->($top, @results) : () ;
+  } else {
+    return $filefunc ? $filefunc->($top): () ;
+  }
+}
+			]]></programlisting>
+
+		<para>
+			这样只需书写<literal>dir_walk('.', \&amp;dangles) 即可</literal>，无需再写成<literal>dir_walk('.', \&amp;dangles, sub {})</literal>。
+		</para>
+
+		<para>
+			再举最后一个例子。这个例子调用<literal>dir_walk()</literal>创建文件树中的所有普通文件的一览，但不显示任何信息：
+		</para>
+
+		<programlisting><![CDATA[
+@all_plain_files =
+  dir_walk('.', sub { $_[0] }, sub { shift; return @_ });
+			]]></programlisting>
+
+		<para>
+			文件回调函数返回它所处理的文件名。目录函数抛弃目录名，并返回目录包含的文件名一览。如果目录不含任何文件会怎样？那它就会给<literal>dir_walk()</literal>返回空列表，然后这个空列表被合并到其他同级目录的结果中。
+		</para>
+	</sect1>
+
+	<sect1 id="sect1-6">
+		<title>函数式编程 vs. 面向对象编程</title>
+
+		<para>
+			现在回过头来看看我们做了什么。我们先写了个很有用的函数<literal>total_size()</literal>，它包含了一段遍历目录结构的代码，对于其他应用程序来说，这段代码也十分实用。因此，为了让<literal>total_size()</literal>更加通用，我们将所有跟计算大小有关的部分都提取出来，替换成调用用户指定的任意函数的处理。其结果就是<literal>dir_walk()</literal>。这样，对于任何需要遍历目录结构并做某些处理的程序，<literal>dir_walk()</literal>负责处理遍历，而参数中的函数负责做特定的处理。只要给<literal>dir_walk()</literal>传递适当的参数，就能让它按照我们的希望来运行。通过提取有用部分，并给它两个函数参数，我们获得了灵活性，同时也有机会重用<literal>dir_walk()</literal>的代码。这就是函数式编程的核心思想。
+		</para>
+
+		<para>
+			而面向对象（<foreignphrase>Object-oriented</foreignphrase>，简称OO）式编程现在正备受关注。面向对象编程的目标与函数式编程相同，都是通过将软件划分成通用的部件，来增加组件的可重用性。
+		</para>
+
+		<para>
+			在面向对象系统中，可以用类似的方法变换<literal>total_size()</literal>函数，但会得到不同的结果。<literal>total_size()</literal>将变成抽象的基类，对应于负责遍历目录的对象，这些对象将会有个名为<literal>dir_walk()</literal>的方法，而它会依次调用两个尚未定义的虚方法<literal>file</literal>和<literal>directory</literal>。（用C++术语来说，这种方法称为<emphasis>纯虚方法</emphasis>）。这种类本身毫无用武之地，因为并没有定义<literal>file</literal>和<literal>directory</literal>方法。要使用该类，必须创建一个子类，其中定义<literal>file</literal>和<literal>directory</literal>方法，然后创建该子类的对象。这些对象都将继承同样的<literal>dir_walk</literal>方法。
+		</para>
+
+		<para>
+			本例中，我认为函数式编程提供的轻量化解决方案更容易使用，并且，作为参数的函数能够在使用时定义，而无需放在类文件里。但重要的是，尽管风格不同，但将原始函数分解成组件的方法却分毫不差。函数式使用了函数参数，面向对象使用了纯虚方法。尽管本书其余部分都在讨论函数式编程，但大部分技巧也可以直接应用在面向对象编程中。
+		</para>
+
+	</sect1>
+
+	<sect1 id="sect1-7">
+		<title>HTML</title>
+		<para>
+			我曾经说过，递归适合处理层次结构的数据，并举了文件系统的例子。但它作为数据结构的例子并不太合适，因为数据结构通常被认为应当放在内存中，而不是在磁盘上。
+		</para>
+
+		<para>
+			对于文件系统的情况，目录中包含了一系列文件，它的存在使得文件系统具有了树形结构。不论任何领域，只要一个元素包含了一系列的其他元素，就会出现树形结构。HTML数据就是个最好的例子。
+		</para>
+
+		<para>
+			HTML数据是一系列的元素和纯文本。每个元素包含一些内容，这些内容又是更多的元素和纯文本。这是个递归定义，与文件系统很相似。实际上，HTML文档的结构也跟文件系统结构十分相近。
+		</para>
+
+		<para>
+			元素由<emphasis>开始标签</emphasis>标记，如下：
+		</para>
+
+		<programlisting><![CDATA[
+<font>
+			]]></programlisting>
+
+		<para>
+			相应地还要有<emphasis>结束标签</emphasis>，比如：
+		</para>
+
+		<programlisting><![CDATA[
+</font>
+			]]></programlisting>
+
+		<para>
+			开始标签可以带有一些<emphasis>属性-值对</emphasis>，此时它是这个样子：
+		</para>
+
+		<programlisting><![CDATA[
+<font size=3 color="red">
+			]]></programlisting>
+
+		<para>
+			但不论如何，结束标签永远不会改变。它没有任何属性-值对。
+		</para>
+
+		<para>
+			开始标签和结束标签之间可以是任何HTML文本系列，包括更多的元素和纯文本。下面是HTML文档的简单例子：
+		</para>
+
+		<programlisting><![CDATA[
+<h1>What Junior Said Next</h1>
+
+<p>But I don’t <font size=3 color="red">want</font>
+to go to bed now!</p>
+			]]></programlisting>
+
+		<para>
+			文档结构如<xref linkend="fg1-3"/>所示。
+		</para>
+
+		<figure id="fg1-3">
+			<title>HTML文档</title>
+			<graphic fileref="img/fg1-3.png"/>
+		</figure>
+
+		<para>
+			主文档有三个部件：<literal>&lt;h1&gt;</literal>元素及其内容；<literal>&lt;p&gt;</literal>元素及其内容；还有它们之间的空白。接下来，<literal>&lt;p&gt;</literal>元素有三个组件：<literal>&lt;font&gt;</literal>元素前面不带标签的文本；<literal>&lt;font&gt;</literal>元素及其内容；还有<literal>&lt;font&gt;</literal>元素后面的不带标签的文本。<literal>&lt;h1&gt;</literal>元素只有一个组件，就是不带标签的文本<literal>What Junior Said Next</literal>。
+		</para>
+
+		<para>
+			在第八章[TODO]将会讨论怎样建立HTML等语言的解析器。同时，还会讨论一个半标准化模块<literal>HTML::TreeBuilder</literal>，它可以将HTML文档转换成树形结构。
+		</para>
+
+		<para>
+			假设HTML数据已经放在了名为<literal>$html</literal>的变量内。下述代码使用<literal>HTML::TreeBuilder</literal>将文本转换成明确的树形结构：
+		</para>
+
+		<programlisting><![CDATA[
+use HTML::TreeBuilder;
+my $tree = HTML::TreeBuilder->new;
+$tree->ignore_ignorable_whitespace(0);
+$tree->parse($html);
+$tree->eof();
+			]]></programlisting>
+
+		<para>
+			<literal>ignore_ignorable_whitespace()</literal>方法指示<literal>HTML::TreeBuilder</literal>模块不允许忽略特定的空白，如<literal>&lt;h1&gt;</literal>元素后面的空行（通常状态下它会被忽略）。
+		</para>
+
+		<para>
+			现在<literal>$tree</literal>代表树形结构。它由散列组成，每个散列是树中的一个节点，表示一个元素。每个散列都有个名为<literal>_tag</literal>的键，值为标签名称；还有一个<literal>_content</literal>键，值为按顺序排列的元素内容一览；<literal>_content</literal>中的每个元素可能是表示无标签文本的字符串，也可能是表示另一个元素的散列。如果标签还带有属性-值对，就把它们直接保存在散列中，属性名作为散列的键，对应的属性做作为散列值。
+		</para>
+
+		<para>
+			比如，上述例子中的<literal>&lt;font&gt;</literal>元素对应的树结点如下所示：
+		</para>
+
+		<programlisting><![CDATA[
+{ _tag => "font",
+  _content => [ "want" ],
+  color => "red",
+  size => 3,
+}
+			]]></programlisting>
+
+		<para>
+			包含<literal>&lt;font&gt;</literal>结点的<literal>&lt;p&gt;</literal>元素对应的树结点如下：
+		</para>
+
+		<programlisting><![CDATA[
+{ _tag => "p",
+  _content => [ "But I don't ",
+              { _tag => "font",
+                _content => [ "want" ],
+                color => "red",
+                size => 3,
+              },
+              " to go to bed now!",
+              ],
+}
+			]]></programlisting>
+
+		<para>
+			遍历这种HTML树并去掉所有标签的函数并不困难。对每个<literal>_content</literal>一览中的元素，通过<literal>ref()</literal>函数可以识别它是否为元素。<literal>ref()</literal>对于元素返回真（因为元素是散列引用），对于普通字符串返回假：
+		</para>
+
+		<programlisting id="untag-html"><![CDATA[
+sub untag_html {
+	my ($html) = @_;
+	return $html unless ref $html; # It’s a plain string
+
+	my $text = '';
+	for my $item (@{$html->{_content}}) {
+		$text .= untag_html($item);
+	}
+
+	return $text;
+}
+			]]></programlisting>
+
+		<para>
+			该函数检查传给它的HTML元素是否为普通字符串，如果是，函数就直接将它返回。如果不是普通字符串，该函数假设它是个树节点，并依次处理它的内容，递归地将每一项内容转换成纯文本，然后将结果字符串累加起来，再返回结果。上例的结果是：
+		</para>
+		<programlisting><![CDATA[
+What Junior Said Next But I don't want to go to bed now!
+			]]></programlisting>
+
+		<para>
+			<literal>HTML::TreeBuilder</literal>的作者Sean Burke建议不要用这种方式访问<literal>HTML::TreeBuilder</literal>对象的内部，因为作者以后可能会改变内部结构。健壮的程序应该使用模块提供的存取方法（<foreignphrase>accessor method</foreignphrase>）。但在本例中，我们先继续使用直接访问内部的方式。
+		</para>
+
+		<para>
+			借鉴<literal>dir_walk()</literal>的经验，我们可以将这个函数分解成两部分：处理HTML树的部分，和负责组合纯文本的部分：
+		</para>
+
+		<programlisting id="walk-html"><![CDATA[
+sub walk_html {
+  my ($html, $textfunc, $elementfunc) = @_;
+  return $textfunc->($html) unless ref $html; # It’s a plain string
+
+  my @results;
+  for my $item (@{$html->{_content}}) {
+    push @results, walk_html($item, $textfunc, $elementfunc);
+  }
+  return $elementfunc->($html, @results);
+}
+			]]></programlisting>
+
+		<para>
+			这个函数的结构跟<literal>dir_walk()</literal>完全一样。它需要两个辅助函数作为参数：<literal>$text</literal>用来处理纯文本字符串，<literal>$elementfunc</literal>接收一个元素和它包含的项目的值，并计算该元素对应的值。<literal>$textfunc</literal>类似于<literal>dir_walk()</literal>中的<literal>$filefunc</literal>，而<literal>$elementfunc</literal>类似于<literal>$dirfunc</literal>。
+		</para>
+
+		<para>
+			现在，删除标签的程序可以这样写：
+		</para>
+
+		<programlisting><![CDATA[
+walk_html($tree, sub { $_[0] },
+                 sub { shift; join '', @_ });
+			]]></programlisting>
+
+		<para>
+			<literal>$textfunc</literal>的函数直接返回参数，不作任何修改。<literal>$elementfunc</literal>这个函数抛弃元素本身，然后把由内容计算而来的文本连接到一起并返回。输出结果与<literal>untag_html()</literal>相同。
+		</para>
+
+		<para>
+			如果需要一个总结文档的程序，显示出<literal>&lt;h1&gt;</literal>标签内的文本而忽略其他部分，可以这样写：
+		</para>
+
+		<programlisting><![CDATA[
+sub print_if_h1tag {
+  my $element = shift;
+  my $text = join '', @_;
+  print $text if $element->{_tag} eq 'h1';
+  return $text;
+}
+walk_html($tree, sub { $_[0] }, \&print_if_h1tag);
+			]]></programlisting>
+
+		<para>
+			它与<literal>untag_html()</literal>基本相同，只是当处理元素的函数会在处理<literal>&lt;h1&gt;</literal>标签时，输出不带标签的文本。
+		</para>
+
+		<para>
+			如果想让函数<emphasis>返回</emphasis>标题内容，而不是显示出来，就得稍稍动点脑筋。考虑下面的例子：
+		</para>
+
+		<programlisting><![CDATA[
+<h1>Junior</h1>
+
+Is a naughty boy.
+			]]></programlisting>
+
+		<para>
+			我们应该忽略文本<literal>Is a naughty boy</literal>，不让它出现在结果中。但在<literal>walk_html()</literal>中，它只是个普通文本，跟我们<emphasis>不想</emphasis>忽略的<literal>Junior</literal>没有任何区别。似乎只需简单地抛弃非标题标签中的内容即可，但实际上并非如此：
+		</para>
+
+		<programlisting><![CDATA[
+<h1>The story of <b>Junior</b></h1>
+			]]></programlisting>
+
+		<para>
+			我们不能只因为<literal>Junior</literal>出现在<literal>&lt;b&gt;</literal>内就忽略它，因为<literal>&lt;b&gt;</literal>标签本身还位于我们想要保留的<literal>&lt;h1&gt;</literal>中。
+		</para>
+
+		<para>
+			在每次调用<literal>walk_html()</literal>时将当前标签所处的上下文环境作为参数传递即可解决这个问题，但如果反方向传递信息的话，解决方式会更简单。根据文本是否能确定位于<literal>&lt;h1&gt;</literal>元素中，可以将文件中的每段文本划分为“保留”（<literal>KEEPER</literal>）和“可能保留”（<literal>MAYBE</literal>）两种。在处理<literal>&lt;h1&gt;</literal>元素时，就要将所有的“可能保留”元素提升为“保留”。最后，只需显示出“保留”，忽略“可能保留”即可：
+		</para>
+
+		<programlisting id="extract-headers"><![CDATA[
+@tagged_texts = walk_html($tree, sub { ['MAYBE', $_[0]] },
+                                 \&promote_if_h1tag);
+
+sub promote_if_h1tag {
+  my $element = shift;
+  if ($element->{_tag} eq 'h1') {
+  	return ['KEEPER', join '', map {$_->[1]} @_];
+  } else {
+  	return @_;
+  }
+}
+			]]></programlisting>
+
+		<para>
+			<literal>walk_html()</literal>的返回值是带有标记的文本一览。各个文本保存在匿名数组中，数组的第一个元素为<literal>MAYBE</literal>或<literal>KEEPER</literal>，第二个元素是字符串。处理纯文本的元素只负责将参数的文本标记为<literal>MAYBE</literal>。对于字符串<literal>Junior</literal>，它返回带有标记的<literal>['MAYBE', 'Junior']</literal>；对于字符串<literal>Is a naughty boy.</literal>，它返回<literal>['MAYBE', 'Is a naughty boy.']</literal>。
+		</para>
+
+		<para>
+			负责处理元素的函数更有意思。它接收一个元素，和一系列带有标记的文本。如果元素是<literal>&lt;h1&gt;</literal>，函数就从其余参数中提取出所有文本并连接在一起，再给结果加上<literal>KEEPER</literal>的标记。如果是其他元素，就直接返回其中的文本，不作任何改变。这些文本将作为标记文本的一部分，传递给处理上一层元素的元素处理函数。可以将它与<xref linkend="sect1-5"/>中的<literal>dir_walk()</literal>的最后那个例子，那个例子使用类似的方法返回文件名列表。
+		</para>
+
+		<para>
+			由于<literal>walk_html()</literal>的最终返回结果是一系列带有标签的文本，所以需要对其进行处理，抛弃那些仍标记为<literal>MAYBE</literal>的文本。这最后一步是不可避免的。这样，最顶层处理无标签文本的方式跟处理<literal>&lt;h1&gt;</literal>内文本的方式不同，所以必须有一段能够判断是否位于顶层的代码。因此，必须创建一个最终函数来处理顶层数据：
+		</para>
+
+		<programlisting><![CDATA[
+sub extract_headers {
+  my $tree = shift;
+  my @tagged_texts = walk_html($tree, sub { ['MAYBE', $_[0]] },
+                                      \&promote_if_h1tag);
+  my @keepers = grep { $_->[0] eq 'KEEPER'} @tagged_texts;
+  my @keeper_text = map { $_->[1] } @keepers;
+  my $header_text = join '', @keeper_text;
+  return $header_text;
+}
+			]]></programlisting>
+
+		<para>
+			或者可以写得更紧凑些：
+		</para>
+
+		<programlisting><![CDATA[
+sub extract_headers {
+  my $tree = shift;
+  my @tagged_texts = walk_html($tree, sub { ['MAYBE', $_[0]] },
+                                      \&promote_if_h1tag);
+  join '', map { $_->[1] } grep { $_->[0] eq 'KEEPER'} @tagged_texts;
+}
+			]]></programlisting>
+
+		<sect2 id="sect1-7-1">
+			<title>更灵活的选择方式</title>
+			<para>
+				刚才已经看到了如何从HTML文档中提取出所有带有<literal>&lt;h1&gt;</literal>标签的文本。其中，最重要的函数就是<literal>promote_if_h1tag()</literal>。但是，下次遇到同样问题时，可能需要提取更详细的大纲，包括<literal>&lt;h1&gt;</literal>、<literal>&lt;h2&gt;</literal>、<literal>&lt;h3&gt;</literal>以及其他所有<literal>&lt;h&gt;</literal>标签。为实现这一点，需要对<literal>promote_if_h1tag()</literal>做些小小的改动，使之变成新的函数：
+			</para>
+
+			<programlisting><![CDATA[
+sub promote_if_h1tag {
+  my $element = shift;
+  if ($element->{_tag} =˜ /∧h\d+$/) {
+    return ['KEEPER', join '', map {$_->[1]} @_];
+  } else {
+    return @_;
+  }
+}
+				]]></programlisting>
+
+			<para>
+				但如果希望<literal>promote_if_h1tag</literal>能更加通用，最好是将通用的部分提取出来。只需将可变的部分变成参数即可：
+			</para>
+
+			<programlisting id="promote-if"><![CDATA[
+sub promote_if {
+  my $is_interesting = shift;
+  my $element = shift;
+  if ($is_interesting->($element->{_tag}) {
+    return ['KEEPER', join '', map {$_->[1]} @_];
+  } else {
+    return @_;
+  }
+}
+				]]></programlisting>
+
+			<para>
+				这样就无需再书写特定的函数<literal>promote_if_h1tag()</literal>，只需将它作为<literal>promote_if()</literal>的特殊情况即可。原来的这段代码：
+			</para>
+
+			<programlisting><![CDATA[
+my @tagged_texts = walk_html($tree, sub { ['maybe', $_[0]] },
+                                           \&promote_if_h1tag);
+				]]></programlisting>
+
+			<para>
+				可以将其改成：
+			</para>
+
+			<programlisting><![CDATA[
+my @tagged_texts = walk_html($tree,
+                              sub { ['maybe', $_[0]] },
+                              sub { promote_if(
+                                       sub { $_[0] eq 'h1'},
+                                       $_[0])
+                              });
+				]]></programlisting>
+
+			<para>
+				第7章[TODO]将讨论一种更简洁的方式。
+			</para>
+
+		</sect2>
+	</sect1>
+
+	<sect1 id="sect1-8">
+		<title>当出现递归时</title>
+
+		<para>
+			有的问题原本就是递归的，那么用递归方法解决????[TODO]。一个最简单的例子就是计算斐波那契数（<foreignphrase>Fibonacci numbers</foreignphrase>）。这是个相当不切实际的例子，但它很简单，所以作为例子非常合适。3.7节[TODO]中会讨论一个更实际的这种例子。
+		</para>
+
+		<sect2 id="sect1-8-1">
+			<title>斐波那契数</title>
+
+			<para>
+				<emphasis>斐波那契数</emphasis>由“比萨的列昂纳多”（Leonardo of Pisa）得名，他的爱称是斐波那契。他于13世纪在一个关于兔子的数学问题中讨论了斐波那契数。最初有一对小兔。一个月后小兔长大为成年兔子，第二个月后它们会生下另一对小兔，这样就有两对兔子了：
+			</para>
+
+			<informaltable frame="none">
+				<tgroup cols="4">
+					<colspec colwidth="0.5in"/>
+					<colspec colwidth="0.5in"/>
+					<colspec colwidth="0.5in"/>
+					<colspec colwidth="0.5in"/>
+					<tbody>
+						<row>
+							<entry>月</entry>
+							<entry>小兔对数</entry>
+							<entry>成年兔对数</entry>
+							<entry>总对数</entry>
+						</row>
+
+						<row>
+							<entry>1</entry>
+							<entry>1</entry>
+							<entry>0</entry>
+							<entry>1</entry>
+						</row>
+
+						<row>
+							<entry>2</entry>
+							<entry>0</entry>
+							<entry>1</entry>
+							<entry>1</entry>
+						</row>
+
+						<row>
+							<entry>3</entry>
+							<entry>1</entry>
+							<entry>1</entry>
+							<entry>2</entry>
+						</row>
+					</tbody>
+				</tgroup>
+			</informaltable>
+
+			<para>
+				下个月，小兔会长大，而成年兔会生下一对小兔：
+			</para>
+
+			<informaltable frame="none">
+				<tgroup cols="4">
+					<colspec colwidth="0.5in"/>
+					<colspec colwidth="0.5in"/>
+					<colspec colwidth="0.5in"/>
+					<colspec colwidth="0.5in"/>
+					<tbody>
+						<row>
+							<entry>4</entry>
+							<entry>1</entry>
+							<entry>2</entry>
+							<entry>3</entry>
+						</row>
+					</tbody>
+				</tgroup>
+			</informaltable>
+
+			<para>
+				再下个月，小兔又长大了，两对成年兔子都会生一对小兔：
+			</para>
+
+			<informaltable frame="none">
+				<tgroup cols="4">
+					<colspec colwidth="0.5in"/>
+					<colspec colwidth="0.5in"/>
+					<colspec colwidth="0.5in"/>
+					<colspec colwidth="0.5in"/>
+					<tbody>
+						<row>
+							<entry>5</entry>
+							<entry>2</entry>
+							<entry>3</entry>
+							<entry>5</entry>
+						</row>
+					</tbody>
+				</tgroup>
+			</informaltable>
+
+			<para>
+				假设没有兔子死去，并且兔子的繁殖能一直持续，那么每个月会有多少对兔子？
+			</para>
+
+			<para>
+				设<inlineequation><textobject><phrase>A(n)</phrase></textobject></inlineequation>为第<inlineequation><textobject><phrase>n</phrase></textobject></inlineequation>月时的成年兔子对数，<inlineequation><textobject><phrase>B(n)</phrase></textobject></inlineequation>为第<inlineequation><textobject><phrase>n</phrase></textobject></inlineequation>月小兔子的对数。那么第<inlineequation><textobject><phrase>n</phrase></textobject></inlineequation>月兔子的总对数设为<inlineequation><textobject><phrase>T(n)</phrase></textobject></inlineequation>，就是<inlineequation><textobject><phrase>A(n) + B(n)</phrase></textobject></inlineequation>：
+			</para>
+
+			<para>
+				<inlineequation><textobject><phrase>T(n) = A(n) + B(n)</phrase></textobject></inlineequation>
+			</para>
+
+			<para>
+				不难看出，某个月的小兔数目等于上个月的成年兔子数目，因为每对成年兔子都会生下一对小兔。用符号来表示就是<inlineequation><textobject><phrase>B(n) = A(n - 1)</phrase></textobject></inlineequation>。代换到公式里，得到：
+			</para>
+
+			<para>
+				<inlineequation><textobject><phrase>T(n) = A(n) + A(n - 1)</phrase></textobject></inlineequation>
+			</para>
+
+			<para>
+				每个月，成年兔子的数目等于上个月的兔子总数，因为上个月的小兔会成长为成年兔子，而上个月的成年兔子仍然活着。用符号表示，就是<inlineequation><textobject><phrase>A(n) = T(n - 1)</phrase></textobject></inlineequation>。代入前面的公式，得到：
+			</para>
+
+			<para>
+				<inlineequation><textobject><phrase>T(n) = T(n - 1) + T(n - 2)</phrase></textobject></inlineequation>
+			</para>
+
+			<para>
+				这样，第<inlineequation><textobject><phrase>n</phrase></textobject></inlineequation>月的兔子总数就是第<inlineequation><textobject><phrase>n - 1</phrase></textobject></inlineequation>月和第<inlineequation><textobject><phrase>n - 2</phrase></textobject></inlineequation>月的兔子数值和。使用这个公式，可以写出计算斐波那契数的函数：
+			</para>
+
+			<programlisting id="fib"><![CDATA[
+# 计算给定的第n月中兔子的对数
+sub fib {
+  my ($month) = @_;
+  if ($month < 2){1}
+  else {
+    fib($month-1) + fib($month-2);
+  }
+}
+				]]></programlisting>
+
+			<para>
+				这段程序十分直观，但它有个问题：除非是极小的参数，否则它会花费掉大量时间
+				<footnote>
+					<para>
+						一位技术审查认为这种说法太夸张，的确如此。但我估计，用这种方式计算<literal>fib(100)</literal>需要花费2,241,937百亿亿年。
+					</para>
+				</footnote>
+				。例如，求<literal>fib(25)</literal>需要递归地计算<literal>fib(24)</literal>和<literal>fib(23)</literal>。但调用<literal>fib(24)</literal><emphasis>同样</emphasis>会递归调用<literal>fib(23)</literal>，再调用<literal>fib(22)</literal>。两次对<literal>fib(23)</literal>的调用<emphasis>还</emphasis>会去调用<literal>fib(22)</literal>，这样它就总共被调用3次。其结果是，<literal>fib(21)</literal>会被计算5次，<literal>fib(20)</literal>会被计算8次，<literal>fib(19)</literal>会被计算13次。
+			</para>
+
+			<para>
+				这些计算和重复计算都会付出沉重的代价。在我的小型计算机上，计算<literal>fib(25)</literal>需要大约4秒，进行了242,785次递归调用。计算<literal>fib(26)</literal>约需要6.5秒，进行392,835次递归调用，<literal>fib(27)</literal>需要10.5秒，进行635,621次递归调用。计算<literal>fib(27)</literal>的时间等于计算<literal>fib(25)</literal>和<literal>fib(26)</literal>值和，因此函数的执行时间会迅速增长，参数每增加2，时间要增长两倍以上。
+				<footnote>
+					<para>
+						参数每增加2，运行时间的增长因子约为2.62。
+					</para>
+				</footnote>
+			</para>
+
+			<para>
+				运行时间的爆炸速度十分迅猛，这全都是因为需要重复计算已经计算过的内容。递归函数有时会有这个问题，不过在第3章[TODO]我们将看到一个简单的解决方法。
+			</para>
+
+		</sect2>
+
+		<sect2 id="sect1-8-2">
+			<title>剖分问题</title>
+
+			<para>
+				斐波那契数比较深奥，很难找到需要计算它的简单的实际例子。
+			</para>
+
+			<para>
+				下面这个例子更实际些。设想有一些值钱的东西，称之为“财宝”，现在需要将它们平均分给两个人。每个东西的价值是已知的，需要确保两个人拿到的东西的总价值相同。或者换个更通俗的说法：已知今天购买的每样东西的重量，现在要两只手各拿一个袋子把它们拎回去，就需要平均地分配重量。
+			</para>
+
+			<para>
+				这需要相当的技巧，不信的话可以试着分一下下面这些价值的物品：
+			</para>
+
+			<para>
+				$9，$12，$14，$17，$23，$32，$34，$40，$42，$49
+			</para>
+
+			<para>
+				由于所有物品的总价值为$272，所以每个人应当分得$136。再试试这个：
+			</para>
+
+			<para>
+				$9，$12，$14，$17，$23，$32，$34，$40，$38，$49
+			</para>
+
+			<para>
+				这里我将$42的东西换成了$38，这样每个人只能分到价值$134的东西。
+			</para>
+
+			<para>
+				这个问题称为<emphasis>剖分问题</emphasis>（<foreignphrase>partition problem</foreignphrase>）。更一般地，不是将一堆财宝分成相等的两部分，而是找出一部分财宝，其总价值等于给定的数量。等分两份等同于找出价值等于总价值的一半的财宝，这样剩下的另一半的价值也是相同的。
+			</para>
+
+			<para>
+				如果找不出总价值等于给定目标的那部分的话，函数将返回<literal>undef</literal>：
+			</para>
+
+			<programlisting id="find-share"><![CDATA[
+sub find_share {
+  my ($target, $treasures) = @_;
+  return [] if $target == 0;
+  return if $target<0|| @$treasures == 0;
+				]]></programlisting>
+
+			<para>
+				先来看看简单的情况。如果目标数量恰好是零，那么产生这样的一部分财宝满足总价值就十分容易。空列表的总价值必然是零，所以就直接返回它。
+			</para>
+
+			<para>
+				如果目标数量小于零，就是不可能实现的，因为我们假定财宝永远是正值。此时问题无解，所以函数可以立即返回失败。如果没有任何财宝，那么因为已知目标值必然大于零，所以判断出无解，立即判定失败。
+			</para>
+
+			<para>
+				否则，目标数量是正值，需要进行真正的处理：
+			</para>
+
+			<programlisting><![CDATA[
+  my ($first, @rest) = @$treasures;
+  my $solution = find_share($target-$first, \@rest);
+  return [$first, @$solution] if $solution;
+  return find_share($target , \@rest);
+}
+				]]></programlisting>
+
+			<para>
+				首先复制财宝的列表，然后将第一个财宝从列表中删除。这是因为我们要考虑该问题的简单情况：去除第一个元素后如何剖分。有两种可能的分法：结果中或者包含有第一个财宝，或者不包含。如果包含第一个财宝，就得在剩下的财宝中找出一个子集，它的总价值等于<literal>$target - $first</literal>。如果不包含，那就得在剩下的财宝中找出总价值等于<literal>$target</literal>的子集。因此，其余这段代码就递归调用<literal>find_share</literal>，分别研究这两种情况。如果第一种情况可行，函数就返回包含第一个财宝的结果；如果第二个方案可行，就返回不包含第一个财宝的结果；如果都不可行，就返回<literal>undef</literal>。
+			</para>
+
+			<para>
+				下面是实际执行的例子。调用<literal>find_share(5, [1, 2, 4, 8])</literal>：
+			</para>
+
+			<informaltable frame="none">
+				<tgroup cols="4">
+					<colspec colwidth="0.5in"/>
+					<colspec colwidth="0.5in"/>
+					<colspec colwidth="0.5in"/>
+					<colspec colwidth="0.5in"/>
+					<tbody>
+						<row>
+							<entry>目前结果</entry>
+							<entry>目前的总价值</entry>
+							<entry>目标</entry>
+							<entry>剩余的财宝</entry>
+						</row>
+
+						<row>
+							<entry></entry>
+							<entry>0</entry>
+							<entry>5</entry>
+							<entry>1 2 4 8</entry>
+						</row>
+					</tbody>
+				</tgroup>
+			</informaltable>
+
+			<para>
+				现在不满足任何简单情况——目标既不是负数也不是零，剩下的财宝列表也非空，因此函数取出第一个元素1放到结果中，然后尝试从剩下的财宝中找出总价值为4的子集：
+			</para>
+
+			<informaltable frame="none">
+				<tgroup cols="4">
+					<colspec colwidth="0.5in"/>
+					<colspec colwidth="0.5in"/>
+					<colspec colwidth="0.5in"/>
+					<colspec colwidth="0.5in"/>
+					<tbody>
+						<row>
+							<entry>1</entry>
+							<entry>1</entry>
+							<entry>4</entry>
+							<entry>2 4 8</entry>
+						</row>
+					</tbody>
+				</tgroup>
+			</informaltable>
+
+			<para>
+				函数将继续尝试，直到不得不放弃。
+			</para>
+
+			<para>
+				接下来函数将剩余元素中的第一个2取出，由于目标值为4，所以执行递归调用，从剩下的两个元素中找出总和等于2的子集：
+			</para>
+
+			<informaltable frame="none">
+				<tgroup cols="4">
+					<colspec colwidth="0.5in"/>
+					<colspec colwidth="0.5in"/>
+					<colspec colwidth="0.5in"/>
+					<colspec colwidth="0.5in"/>
+					<tbody>
+						<row>
+							<entry>1 2</entry>
+							<entry>3</entry>
+							<entry>2</entry>
+							<entry>4 8</entry>
+						</row>
+					</tbody>
+				</tgroup>
+			</informaltable>
+
+			<para>
+				称这种情况为“方案a”。函数会继续尝试该方案，直到得出方案a无解的结论。它尝试将4放到结果中，但那就超过了给定目标：
+			</para>
+
+			<informaltable frame="none">
+				<tgroup cols="4">
+					<colspec colwidth="0.5in"/>
+					<colspec colwidth="0.5in"/>
+					<colspec colwidth="0.5in"/>
+					<colspec colwidth="0.5in"/>
+					<tbody>
+						<row>
+							<entry>1 2 4</entry>
+							<entry>7</entry>
+							<entry>-2</entry>
+							<entry>8</entry>
+						</row>
+					</tbody>
+				</tgroup>
+			</informaltable>
+
+			<para>
+				因此退回一步，从方案a开始尝试不包含4的情况：
+			</para>
+
+			<informaltable frame="none">
+				<tgroup cols="4">
+					<colspec colwidth="0.5in"/>
+					<colspec colwidth="0.5in"/>
+					<colspec colwidth="0.5in"/>
+					<colspec colwidth="0.5in"/>
+					<tbody>
+						<row>
+							<entry>1 2</entry>
+							<entry>3</entry>
+							<entry>2</entry>
+							<entry>8</entry>
+						</row>
+					</tbody>
+				</tgroup>
+			</informaltable>
+
+			<para>
+				结果仍然未达到目标，于是向结果中加入下一个元素8，显然它超了：
+			</para>
+
+			<informaltable frame="none">
+				<tgroup cols="4">
+					<colspec colwidth="0.5in"/>
+					<colspec colwidth="0.5in"/>
+					<colspec colwidth="0.5in"/>
+					<colspec colwidth="0.5in"/>
+					<tbody>
+						<row>
+							<entry>1 2 8</entry>
+							<entry>11</entry>
+							<entry>-6</entry>
+							<entry></entry>
+						</row>
+					</tbody>
+				</tgroup>
+			</informaltable>
+
+			<para>
+				此时<literal>$target &lt; 0</literal>，所以函数失败，然后尝试忽略8。但这也不行，因为此时结果与目标相比还差2，却没有任何元素可以分配了：
+			</para>
+
+			<informaltable frame="none">
+				<tgroup cols="4">
+					<colspec colwidth="0.5in"/>
+					<colspec colwidth="0.5in"/>
+					<colspec colwidth="0.5in"/>
+					<colspec colwidth="0.5in"/>
+					<tbody>
+						<row>
+							<entry>1 2</entry>
+							<entry>3</entry>
+							<entry>2</entry>
+							<entry></entry>
+						</row>
+					</tbody>
+				</tgroup>
+			</informaltable>
+			
+			<para>
+				这就是<literal>if (@$treasures == 0) { return undef }</literal>的情况。
+			</para>
+
+			<para>
+				函数已尝试了方案a的所有可能解法，然而全部失败了。这样就能推断，将1和2都放在结果中是不可行的，因此后退一步，尝试忽略2：
+			</para>
+
+			<informaltable frame="none">
+				<tgroup cols="4">
+					<colspec colwidth="0.5in"/>
+					<colspec colwidth="0.5in"/>
+					<colspec colwidth="0.5in"/>
+					<colspec colwidth="0.5in"/>
+					<tbody>
+						<row>
+							<entry>1</entry>
+							<entry>1</entry>
+							<entry>4</entry>
+							<entry>4 8</entry>
+						</row>
+					</tbody>
+				</tgroup>
+			</informaltable>
+
+			<para>
+				现在尝试在结果中加入4：
+			</para>
+
+			<informaltable frame="none">
+				<tgroup cols="4">
+					<colspec colwidth="0.5in"/>
+					<colspec colwidth="0.5in"/>
+					<colspec colwidth="0.5in"/>
+					<colspec colwidth="0.5in"/>
+					<tbody>
+						<row>
+							<entry>1 4</entry>
+							<entry>5</entry>
+							<entry>0</entry>
+							<entry>8</entry>
+						</row>
+					</tbody>
+				</tgroup>
+			</informaltable>
+
+			<para>
+				此时函数得到<literal>$target == 0</literal>，于是返回成功。这样，已分配的财宝是1和4，总和等于目标5。
+			</para>
+
+			<para>
+				通过忽略第一个财宝，从其余的财宝中找答案，从而降低问题的难度的思路很自然。就算是不使用递归的解决方案，很可能最终也要复制递归解决方案的基本结构，并手工模拟函数调用的栈。
+			</para>
+
+			<para>
+				这样剖分问题就很容易解决了，只需调用<literal>find_share()</literal>，找出第一部分，再通过某种方法计算出原数组中未包含在第一部分结果中的那些元素：
+			</para>
+
+			<programlisting id="partition"><![CDATA[
+sub partition {
+  my $total = 0;
+  my $share_2;
+  for my $treasure (@_) {
+    $total += $treasure;
+  }
+
+  my $share_1 = find_share($total/2, [@_]);
+  return unless defined $share_1;
+				]]></programlisting>
+
+			<para>
+				首先，函数计算所有财宝的总值。然后调用<literal>find_share()</literal>，求出总值恰好等于原数组的总值的一半的子集。如果<literal>find_share()</literal>返回了未定义值，说明无法等分，于是<literal>partition()</literal>马上返回失败。否则，就开始计算<emphasis>没有</emphasis>包含在<literal>$share_1</literal>中的那些财宝，这些就是第二部分：
+			</para>
+
+			<programlisting><![CDATA[
+    my %in_share_1;
+    for my $treasure (@$share_1) {
+      ++$in_share_1{$treasure};
+    }
+
+    for my $treasure (@_) {
+    if ($in_share_1{$treasure}) {
+      --$in_share_1{$treasure};
+    } else {
+      push @$share_2, $treasure;
+    }
+  }
+				]]></programlisting>
+
+			<para>
+				该函数使用散列来计算第一部分中每个值出现的次数，然后依次检查原始数组。如果某个财宝在第一部分中出现过，就将它减掉，否则将它放在另一个构成第二部分的列表中。
+			</para>
+
+			<programlisting><![CDATA[
+  return ($share_1, $share_2);
+}
+				]]></programlisting>
+
+			<para>
+				处理完成后，就返回两个财宝的列表。
+			</para>
+
+			<para>
+				代码不少，但大部分都是在处理列表分割。关键的一行是调用<literal>find_share()</literal>的那一行，它计算真正的答案<literal>$share_1</literal>。其余的代码都是在求<emphasis>不在</emphasis><literal>$share_1</literal>中的财宝的列表<literal>$share_2</literal>。
+			</para>
+
+			<para>
+				但是，<literal>find_share</literal>函数有个问题。执行它要耗费大量时间，特别是无解的情况。它与<literal>fib</literal>的问题本质上相同：反复重复同样的工作。例如，假设它尝试从<literal>1 2 3 4 5 6 7</literal>中找出总和为14的部分。它会从包含1和3的结果开始，尝试是否能让<literal>5 6 7</literal>满足总和为10的目标。结果是不能，所以它会继续寻找其他方案。稍后，它会从包含4的结果开始，再次尝试是否能让<literal>5 6 7</literal>满足10的目标。显然这是在浪费时间，<literal>find_share</literal>应该在第一次尝试后就记住<literal>5 6 7</literal>不能满足总和10的目标。
+			</para>
+
+			<para>
+				我们将在第三章[TODO]讨论如何改正这一点。
+			</para>
+
+		</sect2>
+
+	</sect1>
+</chapter>
+

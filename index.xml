@@ -1,0 +1,13 @@
+<?xml version='1.0' encoding='UTF-8'?>                                            
+<!DOCTYPE book PUBLIC "-//OASIS//DTD DocBook XML V4.1.2//EN"    
+                         "http://docbook.org/xml/4.1.2/docbookx.dtd" [
+<!ENTITY chap01 SYSTEM "chap01.xml">
+<!ENTITY chap02 SYSTEM "chap02.xml">
+<!ENTITY chap03 SYSTEM "chap03.xml">
+]>
+<book lang="zh-CN">
+	<title>Higher Order Perl</title>
+	&chap01;
+	&chap02;
+	&chap03;
+</book>

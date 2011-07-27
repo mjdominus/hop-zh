@@ -1,0 +1,844 @@
+<chapter id="ch02">
+	<title>调度表</title>
+
+	<para>
+		<xref linkend="ch01"/>讨论了让函数更加灵活的方法：通过将函数行为写在其他函数中，并作为参数使用。例如，不要在<literal>hanoi()</literal>函数每次要移动盘子时，直接书写输出特定消息的处理，而是让它去调用另一个从外边传过来的函数。通过给<literal>hanoi()</literal>提供合适的函数，可以让它显示一系列指令、检查移动是否合法，或者生成图形显示，而无需去修改基本算法。类似地，可以将目录遍历的行为从<literal>total_size()</literal>函数的文件大小计算行为中提取出来，得到一个更通用、更实用的<literal>dir_walk()</literal>函数，它可以用来执行许多其他功能。
+	</para>
+
+	<para>
+		使用代码引用才能提取出<literal>hanoi()</literal>和<literal>dir_walk()</literal>的抽象行为。将附加功能作为参数传递给<literal>hanoi()</literal>和<literal>dir_walk()</literal>，实质上等于把这些函数当作数据使用。有了代码引用，我们才能这样使用。
+	</para>
+
+	<para>
+		现在暂时告别递归，去看看使用代码引用的另一个方面。
+	</para>
+
+	<sect1 id="sect2-1">
+		<title>处理配置文件</title>
+		<para>
+			假设应用程序要读取配置文件，其格式如下：
+		</para>
+
+		<programlisting><![CDATA[
+VERBOSITY            8
+CHDIR                /usr/local/app
+LOGFILE              log
+...                  ...
+			]]></programlisting>
+
+		<para>
+			现在需要读取该配置文件，并针对每条指令执行适当的动作。例如，对于<literal>VERBOSITY</literal>执行，应当设置一个全局变量。但遇到<literal>LOGFILE</literal>指令，则应当立刻告诉程序将诊断信息输出到指定的文件中。至于<literal>CHDIR</literal>，应该让程序执行<literal>chdir</literal>，将当前目录改变到指定目录中，这样后续的文件操作即可相对于新的目录来执行。因此，前面例子中的<literal>LOGFILE</literal>应该是<literal>/usr/local/app/log</literal>，而不是该程序执行时用户所在的目录下的<literal>log</literal>文件。
+		</para>
+
+		<para>
+			许多程序员看到这个问题，就会立刻想到使用大量的<literal>if-else</literal>分支来解决，大概是这个样子：
+		</para>
+
+		<programlisting><![CDATA[
+sub read_config {
+  my ($filename) = @_;
+  open my($CF), $filename or return; # Failure
+  while (<$CF>) {
+    chomp;
+    my ($directive, $rest) = split /\s+/, $_, 2;
+    if ($directive eq 'CHDIR') {
+      chdir($rest) or die "Couldn’t chdir to '$rest': $!; aborting";
+    } elsif ($directive eq 'LOGFILE') {
+      open STDERR, ">>", $rest
+      or die "Couldn’t open log file '$rest': $!; aborting";
+    } elsif ($directive eq 'VERBOSITY') {
+      $VERBOSITY = $rest;
+    } elsif ($directive eq ...) {
+      ...
+    } ...
+    } else {
+      die "Unrecognized directive $directive on line $. of $filename; aborting";
+    }
+  }
+  return 1; # Success
+}
+			]]></programlisting>
+
+		<para>
+			该函数有两部分。第一部分打开文件并逐行读入。它将每一行分成<literal>$directive</literal>（第一个单词）和<literal>$rest</literal>（其余的内容）。<literal>$rest</literal>是指令的参数，比如使用<literal>LOGFILE</literal>指令时，该参数指定日志文件的名称。函数的第二部分是个巨大的<literal>if-else</literal>结构，检查<literal>$directive</literal>是什么指令，如果无法识别，就不执行任何动作。
+		</para>
+
+		<para>
+			由于<literal>if-else</literal>中可能有许许多多分支，因此该函数会变得硕大无比。要添加新的指令，就得修改函数，加入另一个<literal>elsif</literal>分支。<literal>if-else</literal>结构的各个分支之间毫无关联，除了它们都是配置项这个无关痛痒的事实之外。这种函数违反了一个重要的编程规则：相关的内容应放到一起，无关的内容应当分开。
+		</para>
+
+		<para>
+			根据这个规则，函数应当做成另一种结构：读取并解析配置文件的处理应该跟识别指令后执行的处理分开。此外，实现各种相互无关的指令的代码不应该堆积在一个函数内。
+		</para>
+
+		<sect2 id="sect2-1-1">
+			<title>表驱动的配置文件</title>
+
+			<para>
+				应该把配置文件的打开、读取和解析的代码，从实现各种指令的无关代码段中分离出来。这样把代码分成两部分，可以更灵活地修改各部分代码，还可以将处理指令的代码分开。
+			</para>
+
+			<para>
+				下面是另一种<literal>read_config()</literal>的写法：
+			</para>
+
+			<programlisting id="rdconfig-tabular"><![CDATA[
+sub read_config {
+  my ($filename, $actions) = @_;
+  open my($CF), $filename or return; # 失败
+  while (<$CF>) {
+    chomp;
+    my ($directive, $rest) = split /\s+/, $_, 2;
+    if (exists $actions->{$directive}) {
+      $actions->{$directive}->($rest);
+    } else {
+      die "Unrecognized directive $directive on line $. of $filename; aborting";
+    }
+  }
+  return 1; # 成功
+}
+				]]></programlisting>
+
+			<para>
+				配置文件的打开、读取和解析的方法跟前面完全相同，但是去掉了巨大的<literal>if-else</literal>分支。取而代之的是该函数接收的另一个参数<literal>$actions</literal>，它是个记载了动作的表格，每次<literal>read_config()</literal>读取一条配置指令时，都会执行表格中的某个动作。该表格称为<emphasis>调度表</emphasis>（<foreignphrase>dispatch table</foreignphrase>），因为<literal>read_config()</literal>读取文件后，会把控制权调度到表中的函数上。<literal>$rest</literal>变量与前面的意思相同，不过现在要将它作为参数传给适当的动作函数。
+			</para>
+
+			<para>
+				典型的调度表如下所示：
+			</para>
+
+			<programlisting><![CDATA[
+$dispatch_table =
+{ CHDIR => \&change_dir,
+  LOGFILE => \&open_log_file,
+  VERBOSITY => \&set_verbosity,
+  ... => ...,
+};
+				]]></programlisting>
+
+			<para>
+				这个调度表是个散列，键（通常称为<emphasis>标签</emphasis>（<foreignphrase>tag</foreignphrase>）），是指令名，值为<emphasis>动作</emphasis>（<foreignphrase>action</foreignphrase>）它是识别指令后要执行的子程序的引用。动作函数应该接收<literal>$rest</literal>变量。典型的动作函数如下所示：
+			</para>
+
+			<programlisting><![CDATA[
+sub change_dir {
+  my ($dir) = @_;
+  chdir($dir)
+    or die "Couldn’t chdir to '$dir': $!; aborting";
+}
+
+sub open_log_file {
+  open STDERR, ">>", $_[0]
+    or die "Couldn’t open log file '$_[0]': $!; aborting";
+}
+
+sub set_verbosity {
+  $VERBOSITY = shift
+}
+				]]></programlisting>
+
+			<para>
+				如果动作很小，也可以直接写在调度表中：
+			</para>
+
+			<programlisting><![CDATA[
+$dispatch_table =
+  { CHDIR => sub { my ($dir) = @_;
+                   chdir($dir) or
+                     die "Couldn’t chdir to '$dir': $!; aborting";
+                 },
+
+    LOGFILE => sub { open STDERR, ">>", $_[0] or
+                       die "Couldn’t open log file '$_[0]': $!; aborting";
+                   },
+
+    VERBOSITY => sub { $VERBOSITY = shift },
+    ...       => ...,
+  };
+				]]></programlisting>
+
+			<para>
+				使用调度表，就可以消灭巨大的<literal>if-else</literal>结构，但最后的这个表并没有小多少。似乎并不是什么骄人的成绩。但实际上，这个表有许多优点。
+			</para>
+		</sect2>
+
+		<sect2 id="sect2-1-2">
+			<title>调度表的优点</title>
+
+			<para>
+				调度表是数据而不是代码，因此可以在运行时修改。如有需要，可以随时加入新的指令。比如表中有下面这一行：
+			</para>
+
+			<programlisting><![CDATA[
+'DEFINE' => \&define_config_directive,
+				]]></programlisting>
+
+			<para>
+				其中，<literal>define_config_directive()</literal>为：
+			</para>
+
+			<programlisting id="def-conf-dir"><![CDATA[
+sub define_config_directive {
+  my $rest = shift;
+  $rest =~ s/^\s+//;
+  my ($new_directive, $def_txt) = split /\s+/, $rest, 2;
+
+  if (exists $CONFIG_DIRECTIVE_TABLE{$new_directive}) {
+    warn "$new_directive already defined; skipping.\n";
+    return;
+  }
+
+  my $def = eval "sub { $def_txt }";
+  if (not defined $def) {
+    warn "Could not compile definition for '$new_directive': $@; skipping.\n";
+    return;
+  }
+
+  $CONFIG_DIRECTIVE_TABLE{$new_directive} = $def;
+}
+				]]></programlisting>
+
+			<para>
+				这样配置程序就可以接受下面这种指令：
+			</para>
+
+			<programlisting><![CDATA[
+DEFINE HOME            chdir('/usr/local/app');
+				]]></programlisting>
+
+			<para>
+				<literal>define_config_directive()</literal>将<literal>HOME</literal>放在<literal>$new_directive</literal>中，把<literal>chdir('/usr/local/app');</literal>放进<literal>$def_txt</literal>中。它通过<literal>eval</literal>将程序文本编译成子程序，然后将新的子程序放到主配置表<literal>%CONFIG_DIRECTIVE_TABLE</literal>中，用<literal>HOME</literal>作为键。如果<literal>%CONFIG_DIRECTIVE_TABLE</literal>恰好是传给<literal>read_config()</literal>的调度表，那么<literal>read_config()</literal>就可以使用新的定义，此后在输入文件中遇到<literal>HOME</literal>指令时，就可以执行与<literal>HOME</literal>关联的动作。现在配置文件可以写成：
+			</para>
+
+			<programlisting><![CDATA[
+DEFINE HOME       chdir('/usr/local/app');
+CHDIR /some/directory
+...
+HOME
+				]]></programlisting>
+
+			<para>
+				其中...部分的指令在<literal>/some/directory</literal>目录中执行。处理程序遇到<literal>HOME</literal>后，就回到主目录。而下面这种定义方式实现了同样的功能，但更为健壮：
+			</para>
+
+			<programlisting><![CDATA[
+DEFINE PUSHDIR   use Cwd; push @dirs, cwd(); chdir($_[0])
+DEFINE POPDIR    chdir(pop @dirs)
+				]]></programlisting>
+
+			<para>
+				<literal>PUSHDIR</literal><emphasis>dirs</emphasis>使用标准<literal>Cwd</literal>模块提供的<literal>cwd()</literal>函数，来获取当前目录的名称。之后将当前目录的名称保存在变量<literal>@dirs</literal>中，然后改变当前目录至<emphasis>dirs</emphasis>。<literal>POPDIR</literal>恢复最后一次<literal>PUSHDIR</literal>的效果：
+			</para>
+
+			<programlisting><![CDATA[
+PUSHDIR /tmp
+A
+PUSHDIR /usr/local/app
+B
+POPDIR
+C
+POPDIR
+				]]></programlisting>
+
+			<para>
+				程序首先进入<literal>/tmp</literal>，然后执行指令A。接下来进入<literal>/usr/local/app</literal>并执行指令B。之后的<literal>POPDIR</literal>返回<literal>/tmp</literal>，然后执行指令C；最后，第二个<literal>POPDIR</literal>回到最初所在的目录。
+			</para>
+
+			<para>
+				为了使<literal>DEFINE</literal>能顺利修改配置表，必须将配置表定义为全局变量。也许，将这个表直接传给<literal>define_config_directive</literal>更好些。这样就需要对<literal>read_config</literal>做些小小的修改：
+			</para>
+
+			<programlisting id="rdconfig-tablearg"><![CDATA[
+sub read_config {
+  my ($filename, $actions) = @_;
+  open my($CF), $filename or return; # 失败
+  while (<$CF>) {
+    chomp;
+    my ($directive, $rest) = split /\s+/, $_, 2;
+    if (exists $actions->{$directive}) {
+      $actions->{$directive}->($rest, $actions);
+    } else {
+      die "Unrecognized directive $directive on line $. of $filename; aborting";
+    }
+  }
+  return 1; # 成功
+}
+				]]></programlisting>
+
+			<para>
+				现在<literal>define_config_directive</literal>可以这样写：
+			</para>
+
+			<programlisting id="def-cdir-tablearg"><![CDATA[
+sub define_config_directive {
+  my ($rest, $dispatch_table) = @_;
+  $rest =~ s/^\s+//;
+  my ($new_directive, $def_txt) = split /\s+/, $rest, 2;
+
+  if (exists $dispatch_table->{$new_directive}) {
+    warn "$new_directive already defined; skipping.\n";
+    return;
+  }
+
+  my $def = eval "sub { $def_txt }";
+  if (not defined $def) {
+    warn "Could not compile definition for '$new_directive': $@; skipping.\n";
+    return;
+  }
+
+  $dispatch_table->{$new_directive} = $def;
+}
+				]]></programlisting>
+
+			<para>
+				这样改动后，就可以添加一个真正实用的配置指令：
+			</para>
+
+			<programlisting><![CDATA[
+DEFINE INCLUDE     read_config(@_);
+				]]></programlisting>
+
+			<para>
+				它将在调度表中添加这样一项：
+			</para>
+
+			<programlisting><![CDATA[
+INCLUDE => sub { read_config(@_) }
+				]]></programlisting>
+
+			<para>
+				现在，配置文件中就可以这样写：
+			</para>
+
+			<programlisting><![CDATA[
+INCLUDE extra.conf
+				]]></programlisting>
+
+			<para>
+				主<literal>read_config()</literal>函数调用该动作并传给它两个参数。第一个参数是配置文件中的<literal>$rest</literal>部分，本例中为文件名<literal>extra.conf</literal>。动作的第二个参数为调度表本身。该动作递归调用<literal>read_config</literal>，并传递上述两个参数。<literal>read_config</literal>读取<literal>extra.conf</literal>，读取结束后，控制权交还给主<literal>read_config</literal>，从上次中断的地方开始继续处理主配置文件的剩余部分。
+			</para>
+
+			<para>
+				为使得递归调用能正常运行，<literal>read_config()</literal>必须是可重入的。导致函数不可充入的罪魁祸首就是全局变量，如使用全局文件句柄，而不是之前用过的词法文件句柄。如果用到了全局文件句柄，那么递归调用<literal>read_config()</literal>就会使用跟主函数调用相同的文件句柄打开<literal>extra.conf</literal>，从而关闭主配置文件。递归调用返回后，由于文件句柄已经关闭，<literal>read_config()</literal>就无法读取主文件的其余部分。
+			</para>
+
+			<para>
+				<literal>INCLUDE</literal>定义相当简单，也相当实用。但它也过于奇巧，以至于我们在书写<literal>read_config</literal>时根本意识不到这种用法。可能会想“哦，<literal>read_config</literal>不需要可重入。”但要是真的把<literal>read_config</literal>写成了不可重入的函数，那么实用的<literal>INCLUDE</literal>定义就无法正常运行了。此处要记住的重点：默认情况下函数应该写成可重入的，因为函数有时会以某种意想不到的方式被递归调用。
+			</para>
+
+			<para>
+				与不可重入函数相比，可重入函数的行为更具有可预测性。由于可被递归调用，它们显得更灵活。<literal>INCLUDE</literal>的例子说明，我们无法预测有人想要递归调用函数的原因。只要可能，把一切都做成可重入的，无疑是万全之策。
+			</para>
+
+			<para>
+				与直接在<literal>read_config()</literal>中写代码相比，调度表的另一个优点是，同一个<literal>read_config()</literal>可以用来处理两个完全无关、指令也完全不同的文件，只需给<literal>read_config()</literal>传递不同的调度表即可。给<literal>read_config()</literal>传递一个精简后的调度表就能把程序变成“入门版”，或者给<literal>read_config()</literal>传递另一套指令的调度表，让它处理基本语法相同的另一种配置文件。这种用法的例子请参见<xref linkend="sect2-1-4"/>。
+			</para>
+		</sect2>
+
+		<sect2 id="sect2-1-3">
+			<title>调度表的策略</title>
+			<para>
+				前面在实现<literal>PUSHDIR</literal>和<literal>POPDIR</literal>时，动作函数使用了全局变量<literal>@dir</literal>来维护目录栈。这种做法并不妥当。换个方法，让<literal>read_config()</literal>支持用户自定义的参数，可以让系统更加灵活。这个自定义参数由<literal>read_config()</literal>的调用者提供，并原封不动地传给动作函数：
+			</para>
+
+			<programlisting id="rdconfig-uparam"><![CDATA[
+sub read_config {
+  my ($filename, $actions, $user_param) = @_;
+  open my($CF), $filename or return; # 失败
+  while (<$CF>) {
+    my ($directive, $rest) = split /\s+/, $_, 2;
+    if (exists $actions->{$directive}) {
+      $actions->{$directive}->($rest, $user_param, $actions);
+    } else {
+      die "Unrecognized directive $directive on line $. of $filename; aborting";
+    }
+  }
+  return 1; # 成功
+}
+				]]></programlisting>
+
+			<para>
+				这样一来就可以消灭全局变量，只需将<literal>PUSHDIR</literal>和<literal>POPDIR</literal>定义成下面这种方式：
+			</para>
+
+			<programlisting><![CDATA[
+DEFINE PUSHDIR   use Cwd; push @{$_[1]}, cwd(); chdir($_[0])
+DEFINE POPDIR    chdir(pop @{$_[1])
+				]]></programlisting>
+
+			<para>
+				<literal>$_[1]</literal>参数指向传给<literal>read_config()</literal>的用户自定义参数。如果这样调用<literal>read_config()</literal>：
+			</para>
+
+			<programlisting><![CDATA[
+read_config($filename, $dispatch_table, \@dirs);
+				]]></programlisting>
+
+			<para>
+				那么<literal>PUSHDIR</literal>和<literal>POPDIR</literal>就使用<literal>@dir</literal>作为栈。如果这样调用：
+			</para>
+
+			<programlisting><![CDATA[
+read_config($filename, $dispatch_table, []);
+				]]></programlisting>
+
+			<para>
+				就使用全新的匿名数组作为栈。
+			</para>
+
+			<para>
+				将被调用的动作的标签名称传给动作回调函数通常很有用。可以这样修改<literal>read_config()</literal>：
+			</para>
+
+			<programlisting id="rdconfig-tagarg"><![CDATA[
+sub read_config {
+  my ($filename, $actions, $user_param) = @_;
+  open my($CF), $filename or return; # 失败
+  while (<$CF>) {
+    my ($directive, $rest) = split /
+    \s+/, $_, 2;
+    if (exists $actions->{$directive}) {
+      $actions->{$directive}->($directive, $rest, $actions, $user_param);
+    } else {
+      die "Unrecognized directive $directive on line $. of $filename; aborting";
+    }
+  }
+  return 1; # 成功
+}
+				]]></programlisting>
+
+			<para>
+				为什么说有用呢？比如像这样定义<literal>VERBOSITY</literal>指令：
+			</para>
+
+			<programlisting><![CDATA[
+VERBOSITY => sub { $VERBOSITY = shift },
+				]]></programlisting>
+
+			<para>
+				不难想象，其他配置指令也可能是这种形式：
+			</para>
+
+			<programlisting><![CDATA[
+VERBOSITY => sub { $VERBOSITY = shift },
+TABLESIZE => sub { $TABLESIZE = shift },
+PERLPATH => sub { $PERLPATH = shift },
+... etc ...
+				]]></programlisting>
+
+			<para>
+				最好是将这三个相似的动作合并成一个函数，完成所有处理。这样，函数就需要知道指令名称，以便设置恰当的全局变量：
+			</para>
+
+			<programlisting><![CDATA[
+VERBOSITY => \&set_var,
+TABLESIZE => \&set_var,
+PERLPATH => \&set_var,
+... etc ...
+
+sub set_var {
+  my ($var, $val) = @_;
+  $$var = $val;
+}
+				]]></programlisting>
+
+			<para>
+				如果不喜欢定义一大堆全局变量，可以将配置信息保存在散列中，并将散列的引用作为用户自定义参数：
+			</para>
+
+			<programlisting><![CDATA[
+sub set_var {
+  my ($var, $val, undef, $config_hash) = @_;
+  $config_hash->{$var} = $val;
+}
+				]]></programlisting>
+
+			<para>
+				本例中并没有节约多少代码，因为动作太简单了。但可能会出现多个配置指令需要共享同一个复杂函数的情况。下面是个稍微复杂些的例子：
+			</para>
+
+			<programlisting><![CDATA[
+sub open_input_file {
+  my ($handle, $filename) = @_;
+  unless (open $handle, $filename) {
+    warn "Couldn't open $handle file '$filename': $!; ignoring.\n";
+  }
+}
+				]]></programlisting>
+
+			<para>
+				许多配置指令都可以共用这个<literal>open_input_file()</literal>函数。例如，假设程序有三个输入源：历史文件、临时文件和模式文件（<foreignphrase>pattern file</foreignphrase>）。我们希望三个文件的位置都可以在配置文件中指定，这就需要在调度表中加入三条指令。但三条指令都可以共享同一个<literal>open_input_file()</literal>函数：
+			</para>
+
+			<programlisting><![CDATA[
+...
+HISTORY => \&open_input_file,
+TEMPLATE => \&open_input_file,
+PATTERN => \&open_input_file,
+...
+				]]></programlisting>
+
+			<para>
+				假设配置文件如下：
+			</para>
+
+			<programlisting><![CDATA[
+HISTORY          /usr/local/app/history
+TEMPLATE         /usr/local/app/templates/main.tmpl
+PATTERN          /home/bill/app/patterns/default.pat
+				]]></programlisting>
+
+			<para>
+				<literal>read_config()</literal>首先处理第一行，将其分派到<literal>open_input_file()</literal>函数，参数为<literal>('HISTORY', '/usr/local/app/history')</literal>。<literal>open_input_file()</literal>就会将参数<literal>HISTORY</literal>作为文件句柄名使用，用<literal>HISTORY</literal>打开<literal>/usr/local/app/history</literal>文件。第二行，<literal>read_config()</literal>仍然会分派给<literal>open_input_file()</literal>，传递参数<literal>('TEMPLATE', '/usr/local/app/templates/main.tmpl')</literal>。这次，<literal>open_input_file()</literal>就会打开<literal>TEMPLATE</literal>文件句柄，而不再是<literal>HISTORY</literal>了。
+			</para>
+
+		</sect2>
+
+		<sect2 id="sect2-1-4">
+			<title>默认动作</title>
+
+			<para>
+				示例中的<literal>read_config()</literal>在遇到不认识的动作时就会异常终止。这个动作是硬编码的。如果调度表能够自己处理无法识别的指令就好了。添加这个功能很容易：
+			</para>
+
+      <programlisting id="rdconfig-default"><![CDATA[
+sub read_config {
+  my ($filename, $actions, $userparam) = @_;
+  open my($CF), $filename or return; # 失败
+  while (<$CF>) {
+    chomp;
+    my ($directive, $rest) = split /\s+/, $_, 2;
+    my $action = $actions->{$directive} || $actions->{_DEFAULT_};
+    if ($action) {
+      $action->($directive, $rest, $actions, $userparam);
+    } else {
+      die "Unrecognized directive $directive on line $. of $filename; aborting";
+    }
+  }
+  return 1; # 成功
+}
+				]]></programlisting>
+
+			<para>
+				这里，函数在动作表中查找特定指令，如果不存在，就查找<literal>_DEFAULT_</literal>动作。如果调度表中连默认动作都不存在，就出错。典型的<literal>_DEFAULT_</literal>动作如下：
+			</para>
+
+			<programlisting><![CDATA[
+sub no_such_directive {
+  my ($directive) = @_;
+  warn "Unrecognized directive $directive at line $.; ignoring.\n";
+}
+				]]></programlisting>
+
+			<para>
+				由于传给动作函数的第一个参数就是指令名称，因此默认动作能判断出无法识别的指令是什么。而<literal>no_such_directive()</literal>函数也能获取到整个调度表，所以可以取出正确的指令名，通过一些模式匹配来猜测无法识别的指令可能是什么。下面的<literal>no_such_directive()</literal>调用<literal>score_match()</literal>函数（该函数我们不再详细说明）来判断哪个动作与无法识别的指令最合适：
+			</para>
+
+			<programlisting><![CDATA[
+sub no_such_directive {
+  my ($bad, $rest, $table) = @_;
+  my ($best_match, $best_score);
+  for my $good (keys %$table) {
+    my $score = score_match($bad, $good);
+    if ($score > $best_score) {
+      $best_score = $score;
+      $best_match = $good;
+    }
+  }
+  warn "Unrecognized directive $bad at line $.;\n";
+  warn "\t(perhaps you meant $best_match?)\n";
+}
+				]]></programlisting>
+
+			<para>
+				这个系统的代码并不多，但它极其灵活。假设另一个程序要读取一个用户ID和电子邮件地址的一览表，格式如下：
+			</para>
+
+			<programlisting><![CDATA[
+fred              fred@example.com
+bill              bvoehno@plover.com
+warez             warez-admin@plover.com
+...               ...
+				]]></programlisting>
+
+			<para>
+				只需给<literal>read_config()</literal>提供适当的调度表，就可以重用它来读取并分析该文件：
+			</para>
+
+			<programlisting><![CDATA[
+$address_actions =
+  { _DEFAULT_ => sub { my ($id, $addr, $act, $aref) = @_;
+                       push @$aref, [$id, $addr];
+                     },
+};
+
+read_config($ADDRESS_FILE, $address_actions, \@address_array);
+				]]></programlisting>
+
+			<para>
+				传给<literal>read_config()</literal>的调度表很小，只有一个<literal>_DEFAULT_</literal>项。<literal>read_config()</literal>每次读取地址簿文件中的一行，都会调用一次默认动作，将“指令名”（实际上是用户ID）和地址（<literal>$rest</literal>值）传给该动作。默认动作将这个信息存储到<literal>@address_array</literal>中，供以后的程序使用。
+			</para>
+
+		</sect2>
+	</sect1>
+
+	<sect1 id="sect2-2">
+		<title>计算器</title>
+
+		<para>
+			先暂时放下配置文件的例子。显然，许多类似的情况下都适合使用调度表。例如，处理用户输入的命令的对话式程序可以利用调度表来分派用户命令。接下来讨论一个完全不同的例子——一个非常简单的计算器。
+		</para>
+
+		<para>
+			这个计算器的输入项是算术表达式的字符串，用<emphasis>逆波兰式</emphasis>（<foreignphrase>reverse Polish notation</foreignphrase>，简称RPN）表示。通常的算术记法会产生歧义。例如 2 + 3·4，无法准确判断应当先做加法还是先做乘法。必须指定特定规则，要求乘法必须先于加法运算，否则就只能通过增加括号的方法来消除歧义，如(2 + 3)·4。
+		</para>
+
+		<para>
+			逆波兰式用另一种方式解决了该问题。它并不是将操作符放在操作数之间，而是将它放在操作数之后。例如，2 + 3要写成<literal>2 3 +</literal>。(2 + 3)·4要写成<literal>2 3 + 4 *</literal>。<literal>+</literal>在<literal>2</literal>和<literal>3</literal>之后，表明要将2和3相加；<literal>*</literal>表明要将前两个表达式<literal>2 3 +</literal>和<literal>4</literal>相乘。而2 + (3·4)用逆波兰式则写成<literal>2 3 4 * +</literal>。<literal>+</literal>的操作对象是它之前的两个参数，第一个是<literal>2</literal>，第二个是<literal>3 4 *</literal>。操作符永远在操作数之后，因此这种形式称为<emphasis>后缀形式</emphasis>（<foreignphrase>postfix form</foreignphrase>）。与此相对，通常的形式中操作符位于操作数之间，称为<literal>中缀形式</literal>（<foreignphrase>infix form</foreignphrase>）。
+		</para>
+
+		<para>
+			计算逆波兰式表达式的值十分简单。只需使用一个栈，从左到右依次读取表达式。遇到数字时，就将它压入栈中。遇到操作符，就将栈顶的两个元素弹出并执行相应的操作，然后将结果压回栈中。例如，要计算<literal>2 3 + 4 *</literal>，首先压入2和3，下一个符号是<literal>+</literal>，因此要将2和3弹出，然后压入结果5。接下来，将4压入栈放在5的上边，下面的<literal>*</literal>表明要将4和5弹出并将最终结果20压入。要计算<literal>2 3 4 * +</literal>，首先依次压入2、3和4。<literal>*</literal>表明要将3和4弹出并压入乘积12，后面的<literal>+</literal>说明要弹出12和2，把最终结果14压入。
+		</para>
+
+		<para>
+			下面是这个小型计算器程序，需要计算的逆波兰式通过命令行参数指定：
+		</para>
+
+		<programlisting id="rpn-ifelse"><![CDATA[
+my $result = evaluate($ARGV[0]);
+print "Result: $result\n";
+
+sub evaluate {
+  my @stack;
+  my ($expr) = @_;
+  my @tokens = split /\s+/, $expr;
+  for my $token (@tokens) {
+    if ($token ~= /^\d+$/) { # 是数字
+      push @stack, $token;
+    } elsif ($token eq '+') {
+      push @stack, pop(@stack) + pop(@stack);
+    } elsif ($token eq '-') {
+      my $s = pop(@stack);
+      push @stack, pop(@stack) - $s
+    } elsif ($token eq '*') {
+      push @stack, pop(@stack) * pop(@stack);
+    } elsif ($token eq '/') {
+      my $s = pop(@stack);
+      push @stack, pop(@stack) / $s
+    } else {
+      die "Unrecognized token '$token'; aborting";
+    }
+  }
+  return pop(@stack);
+}
+			]]></programlisting>
+
+		<para>
+			该函数按照空格将参数分解成<emphasis>记号</emphasis>（<foreignphrase>token</foreignphrase>）——有意义的最小输入单位。接下俩，函数从左到右依次循环每个记号。如果记号匹配<literal>/^\d+$/</literal>，说明是个数字，于是将其压入栈中。否则它就是个操作符，就要从栈中弹出两个值进行操作，再将结果压回栈中。代码中的辅助变量<literal>$s</literal>用于执行减法，因为<literal>5 3 -</literal>应该得到2而不是-2。如果执行：
+		</para>
+
+		<programlisting><![CDATA[
+push @stack, pop(@stack) - pop(@stack);
+			]]></programlisting>
+		
+		<para>
+			那么计算<literal>5 3 -</literal>时，第一个<literal>pop</literal>首先弹出3，第二个弹出5，结果就是-2了。同样的原因，除法的处理也是类似的。而乘法和加法则对操作数的顺序没有要求。
+		</para>
+
+		<para>
+			所有记号都处理完毕之后，该函数将栈顶的值弹出，作为最终结果。这段代码没有考虑栈中可能残留多个值的情况（即参数中含有多个表达式的情况），比如<literal>10 2 * 3 4 +</literal>会在栈中留下20和7。它也没有考虑栈为空的情况，例如<literal>2 *</literal>和<literal>2 3 + *</literal>都是错误的表达式，因为<literal>*</literal>需要两个参数，但实际上却只有一个。计算这些表达式时，会遇到要进行操作，但栈为空的情况。此时应当报告错误，但为了简单起见，此处没有考虑错误处理。
+		</para>
+
+		<para>
+			使用调度表代替庞大的<literal>if-else</literal>分支，可以让程序更简单、更灵活。
+		</para>
+
+		<programlisting id="rpn-table"><![CDATA[
+my @stack;
+my $actions = {
+  '+' => sub { push @stack, pop(@stack) + pop(@stack) },
+  '*' => sub { push @stack, pop(@stack) * pop(@stack) },
+  '-' => sub { my $s = pop(@stack); push @stack, pop(@stack) - $s },
+  '/' => sub { my $s = pop(@stack); push @stack, pop(@stack) / $s },
+  'NUMBER' => sub { push @stack, $_[0] },
+  '_DEFAULT_' => sub { die "Unrecognized token '$_[0]'; aborting" }
+};
+
+my $result = evaluate($ARGV[0], $actions);
+print "Result: $result\n";
+
+sub evaluate {
+  my ($expr, $actions) = @_;
+  my @tokens = split /\s+/, $expr;
+  for my $token (@tokens) {
+    my $type;
+    if ($token ~= /^\d+$/) { # 是数字
+      $type = 'NUMBER';
+    }
+
+    my $action = $actions->{$type}
+              || $actions->{$token}
+              || $actions->{_DEFAULT_};
+    $action->($token, $type, $actions);
+  }
+  return pop(@stack);
+}
+			]]></programlisting>
+
+		<para>
+			现在该程序的主要处理<literal>evaluate()</literal>比以前更小、更通用了。如果记号有“类型”，就根据类型选择一个动作；否则，就需要根据记号本身的值来决定动作；如果没有该动作，就使用默认动作。<literal>evaluate()</literal>函数通过对记号进行模式匹配来判断记号的类型，如果记号像数字，那么类型就是<literal>NUMBER</literal>。只需给调度表<literal>%actions</literal>添加新的数据项，即可添加新的操作符：
+		</para>
+
+		<programlisting><![CDATA[
+...
+'sqrt' => sub { push @stack, sqrt(pop(@stack)) },
+...
+			]]></programlisting>
+
+		<para>
+			同样，调度表的结构使得只需给计算程序传递不同的调度表，就可以实现不同的功能。上述例子是将表达式计算出一个数字的，但只要使用下面这个调度表，就可以将表达式编译成<emphasis>抽象语法树</emphasis>（<foreignphrase>abstract syntax tree</foreignphrase>，缩写为AST）：
+		</para>
+
+		<programlisting><![CDATA[
+my $actions = {
+  'NUMBER'    => sub { push @stack, $_[0] },
+  '_DEFAULT_' => sub { my $s = pop(@stack);
+                       push @stack,
+                          [ $_[0], pop(@stack), $s ]
+                       },
+};
+			]]></programlisting>
+
+		<para>
+			<literal>2 3 + 4 *</literal>的编译结果为<literal>[ '*', [ '+', 2, 3 ], 4 ]</literal>，如<xref linkend="fg2-1"/>所示。
+		</para>
+		<figure id="fg2-1">
+			<title>表达式<literal>2 3 + 4 *</literal>的抽象语法树</title>
+			<graphic fileref="img/fg2-1.png"/>
+		</figure>
+
+		<para>
+			所有结构都直接表示出来，因此这是最常用的内部表达形式。表达式可以是个数，也可以是带有两个操作数的操作符；两个操作数也是表达式。抽象语法树可以是个数，也可以是一个操作符加上另外两个抽象语法树。有了抽象语法树，处理它的函数就呼之欲出了。例如，下面这个函数可将抽象语法树转换为字符串：
+		</para>
+
+		<programlisting id="AST-to-string"><![CDATA[
+sub AST_to_string {
+  my ($tree) = @_;
+  if (ref $tree) {
+    my ($op, $a1, $a2) = @$tree;
+    my ($s1, $s2) = (AST_to_string($a1),
+                     AST_to_string($a2));
+    "($s1 $op $s2)";
+  } else {
+    $tree;
+  }
+}
+			]]></programlisting>
+
+		<para>
+			对于<xref linkend="fg2-1"/>，<literal>AST_to_string()</literal>函数的生成结果是<literal>"((2 + 3) * 4)"</literal>。函数首先检查树是否为复杂结构，如果不是引用，就肯定是个数字，那么相应的字符串就是这个数字。否则，字符串应当由三部分组成：表示操作符的符号（保存在<literal>$op</literal>中），以及另外两个抽象语法树。函数用递归调用将这两个树转换为字符串<literal>$s1</literal>和<literal>$s2</literal>，然后在<literal>$s1</literal>和<literal>$s2</literal>之间加入适当的操作符符号以组成字符串，并在两端加上括号以避免歧义。这就是个能将后缀表示法转换成中缀表示法的程序：给<literal>evaluate()</literal>一个后缀表达式，就能生成抽象语法树，然后将抽象语法树传给<literal>AST_to_string()</literal>来生成中缀表达式。
+		</para>
+
+		<para>
+			表达式的递归结构决定了抽象语法树的递归性，而抽象语法树的递归性又决定了<literal>AST_to_string()</literal>函数也是递归的。<literal>AST_to_string()</literal>函数的结构直接反映了表达式的结构。
+		</para>
+
+		<sect2 id="sect2-2-1">
+			<title>重新思考HTML处理</title>
+
+			<para>
+				<xref linkend="sect1-7"/>中讨论了递归的HTML处理程序<literal>walk_html()</literal>。HTML处理程序需要两个函数参数：用于处理不带标签的文本的<literal>$textfunc</literal>函数，和用于处理HTML元素的<literal>$elementfunc</literal>函数。但“HTML元素”这个概念很模糊，因为元素多种多样，而我们需要对每种标签执行不同的处理。
+			</para>
+
+			<para>
+				我们已经知道有几种做法。最直接的就是让使用者在<literal>$elementfunc</literal>中写一个巨大的<literal>if-else</literal>分支。如前所述，这种方法有很大缺点。使用者也可以为<literal>$elementfunc</literal>提供一个调度表。调度表的结构显而易见：表的键就是标签名，值就是处理每个标签的动作。这样就无需让<literal>$elementfunc</literal>这一个函数去处理每种可能的元素，而只需在调度表中，为每种元素准备一个动作即可，外加一个将元素分派给适当动作的通用<literal>$elementfunc</literal>函数。
+			</para>
+
+			<para>
+				<literal>$elementfunc</literal>访问调度表有几种方式。调度表可以直接写在处理元素的函数中：
+			</para>
+
+			<programlisting><![CDATA[
+sub elementfunc {
+  my $table = { h1        => sub { shift; my $text = join '', @_;
+                                   print $text; return $text ;
+                                 },
+                _DEFAULT_ => sub { shift; my $text = join '', @_;
+                                   return $text ;
+                                 },
+              };
+  my ($element) = @_;
+  my $tag = $element->{_tag};
+  my $action = $table->{$tag} || $table{_DEFAULT_};
+  return $action->(@_);
+}
+				]]></programlisting>
+
+			<para>
+				或者，也可以直接让<literal>walk_html()</literal>支持调度表，这样就不用传递<literal>$elementfunc</literal>，而是直接把调度表传给<literal>walk_html()</literal>。此时<literal>walk_html()</literal>函数如下所示：
+			</para>
+
+			<programlisting id="walk-html-disp"><![CDATA[
+sub walk_html {
+  my ($html, $textfunc, $elementfunc_table) = @_;
+  return $textfunc->($html) unless ref $html; # 纯文本字符串的情况
+  my ($item, @results);
+  for $item (@{$html->{_content}}) {
+    push @results, walk_html($item, $textfunc, $elementfunc_table);
+  }
+  my $tag = $html->{_tag};
+  my $elementfunc = $elementfunc_table->{$tag}
+                 || $elementfunc_table->{_DEFAULT_}
+                 || die "No function defined for tag '$tag'";
+  return $elementfunc->($html, @results);
+}
+				]]></programlisting>
+
+			<para>
+				另一种选择是让<literal>walk_html()</literal>给<literal>$textfunc</literal>和<literal>$elementfunc</literal>传递一个用户自定义参数。这样，通过自定义参数，就可以将调度表传递给<literal>$elementfunc</literal>：
+			</para>
+
+			<programlisting id="walk-html-uparam"><![CDATA[
+sub walk_html {
+  my ($html, $textfunc, $elementfunc, $userparam) = @_;
+  return $textfunc->($html, $userparam) unless ref $html;
+  my ($item, @results);
+  for $item (@{$html->{_content}}) {
+    push @results, walk_html($item, $textfunc, $elementfunc, $userparam);
+  }
+  return $elementfunc->($html, $userparam, @results);
+}
+				]]></programlisting>
+
+			<para>
+				这样，使用者就可以自由地设计处理调度表的<literal>$elementfunc</literal>函数了。
+			</para>
+
+			<para>
+				这里有个细节很重要。自定义参数在传给<literal>$elementfunc</literal>的同时也传给了<literal>$textfunc</literal>。如果自定义参数是标签的调度表，那<literal>$textfunc</literal>就完全用不到它。那为什么还要传给它呢？因为自定义参数可能不是调度表。例如，用户可以这样调用<literal>walk_html()</literal>：
+			</para>
+
+			<programlisting><![CDATA[
+walk_html($html_text,
+
+          # $textfunc
+          sub { my ($text, $aref) = @_;
+                push @$aref, $text },
+
+          # $elementfunc does nothing
+          sub { },
+
+          # user parameter
+          \@text_array
+         );
+				]]></programlisting>
+
+			<para>
+				此时<literal>walk_html()</literal>就会遍历HTML树，并将所有不带标签的纯文本放进<literal>@text_array</literal>数组中。自定义参数是<literal>@text_array</literal>的引用，传给<literal>$textfunc</literal>后，该函数就将文本存进该引用指向的数组。<literal>$elementfunc</literal>则完全不使用该参数。作为<literal>walk_html()</literal>的作者，我们无法预知使用者需要哪种类型的自定义参数，因此最好将它同时传给<literal>$textfunc</literal>和<literal>$elementfunc</literal>，这样不需要该参数的函数只需忽略它即可。
+			</para>
+		</sect2>
+
+	</sect1>
+</chapter>
+
